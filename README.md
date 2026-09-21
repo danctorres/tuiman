@@ -33,13 +33,13 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `h` `l` / `←` `→` | focus categories / list; `j` `k` / `↑` `↓` then move in that panel |
 | `tab` `shift-tab` | next / previous category |
 | `s` | cycle sort: stars, name, last push |
-| `S` `L` | minimum stars, language |
-| `t` `a` `A` | installed only, installable here only, show archived |
+| `*` `L` | minimum stars, language |
+| `I` `a` `A` | installed only, installable here only, show archived |
 | `c` | clear filters |
-| `i` `x` | install, uninstall (always shows the exact command first) |
+| `enter` `u` | install, uninstall (always shows the exact command first) |
 | `o` | open the project page |
 | `v` | view job output |
-| `T` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
+| `t` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
 | `?` | key help (`/` searches it) |
 | `r` | refresh the index |
 
