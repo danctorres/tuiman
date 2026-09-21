@@ -68,7 +68,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match &app.mode {
         Mode::Picker(picker) => overlay::picker(buf, area, picker, app.theme()),
-        Mode::Help => overlay::help(buf, area, app.theme()),
+        Mode::Help(help) => {
+            if let Some(pos) = overlay::help(buf, area, app.theme(), help) {
+                frame.set_cursor_position(pos);
+            }
+        }
         Mode::Log => overlay::log(buf, area, app),
         Mode::Normal | Mode::Search => {}
     }
@@ -81,7 +85,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
-    let block = Block::bordered().border_style(t.dim()).title(" Categories ");
+    let border = if app.sidebar_focused { t.accent() } else { t.dim() };
+    let block = Block::bordered().border_style(border).title(" Categories ");
     let inner = block.inner(area);
     block.render(area, buf);
 
@@ -145,7 +150,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         }
         _ => Line::from(" tuiman "),
     };
-    let border = if app.mode == Mode::Search { t.accent() } else { t.dim() };
+    let border = if app.sidebar_focused { t.dim() } else { t.accent() };
     let block =
         Block::bordered().border_style(border).title_top(title).title_top(filters(app).right_aligned());
     let inner = block.inner(area);
@@ -400,6 +405,18 @@ mod tests {
         press(&mut app, 'i');
         let all = render(&mut app, 100, 24).join("\n");
         assert!(all.contains("Install bottom?") && all.contains("cargo install --locked bottom"), "{all}");
+    }
+
+    #[test]
+    fn help_search_narrows_the_list() {
+        let mut app = app();
+        press(&mut app, '?');
+        assert!(render(&mut app, 100, 30).join("\n").contains("Press / to search keys"));
+        press(&mut app, '/');
+        "theme".chars().for_each(|c| press(&mut app, c));
+        let all = render(&mut app, 100, 30).join("\n");
+        assert!(all.contains("/ theme") && all.contains("colour theme"), "{all}");
+        assert!(!all.contains("half page"), "{all}");
     }
 
     #[test]
