@@ -93,6 +93,16 @@ pub fn valid_package_name(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"@._+/-".contains(&b))
 }
 
+/// Emoji, dingbats, variation selectors and joiners. Terminals disagree about
+/// how wide these are, which corrupts any cell-based renderer, so they are
+/// kept out of everything tuiman draws (catalog text and job output alike).
+pub fn is_emoji(c: char) -> bool {
+    matches!(c,
+        '\u{200d}' | '\u{20e3}' | '\u{fe00}'..='\u{fe0f}'
+        | '\u{2190}'..='\u{21ff}' | '\u{2300}'..='\u{23ff}' | '\u{2600}'..='\u{27bf}'
+        | '\u{2b00}'..='\u{2bff}' | '\u{1f000}'..='\u{1faff}' | '\u{e0020}'..='\u{e007f}')
+}
+
 /// URLs are handed to the system browser opener, so only plain web URLs pass.
 pub fn valid_url(url: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://"))
@@ -131,6 +141,11 @@ pub struct Catalog {
 }
 
 impl Catalog {
+    /// A valid catalog with no rows.
+    pub fn empty() -> Catalog {
+        Builder::new(0).finish()
+    }
+
     pub fn len(&self) -> usize {
         self.name.len()
     }

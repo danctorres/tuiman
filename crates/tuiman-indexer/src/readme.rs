@@ -89,7 +89,8 @@ fn plain_text(md: &str) -> String {
         }
     }
     out.push_str(rest);
-    unescape(&out.replace(['`', '*'], ""))
+    let text: String = out.chars().filter(|&c| c != '`' && c != '*' && !tuiman_index::is_emoji(c)).collect();
+    unescape(text.trim())
 }
 
 #[cfg(test)]
@@ -156,5 +157,9 @@ mod tests {
     fn plain_text_survives_stray_brackets() {
         assert_eq!(plain_text("array [0] and [x](u) ok"), "array [0] and x ok");
         assert_eq!(plain_text("dangling [bracket"), "dangling [bracket");
+        assert_eq!(
+            plain_text("\u{2702}\u{fe0f} snips \u{1f680}, caf\u{e9} \u{4e2d}\u{6587}"),
+            "snips , caf\u{e9} \u{4e2d}\u{6587}"
+        );
     }
 }
