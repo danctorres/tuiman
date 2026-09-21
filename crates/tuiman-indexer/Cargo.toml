@@ -1,0 +1,15 @@
+[package]
+name = "tuiman-indexer"
+description = "Builds the tuiman index from awesome-tuis; runs in CI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+tuiman-index = { path = "../tuiman-index" }
+
+[lints]
+workspace = true

@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/tuiman-index", "crates/tuiman", "crates/tuiman-indexer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/danctorres/tuiman"
+rust-version = "1.80"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# The indexer talks to the network for minutes; optimising it buys nothing.
+[profile.release.package.tuiman-indexer]
+opt-level = 1
