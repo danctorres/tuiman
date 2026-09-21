@@ -4,6 +4,7 @@
 //! This crate is shared by the client (which only ever decodes) and the CI
 //! indexer (which only ever builds and encodes). It has no dependencies.
 
+pub mod date;
 mod format;
 
 pub use format::{decode, encode, DecodeError, MAX_INDEX_BYTES};
