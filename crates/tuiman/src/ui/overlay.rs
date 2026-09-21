@@ -6,10 +6,10 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Widget};
 
-use super::{ACCENT, DIM, SELECTED};
 use crate::app::{App, Picker};
+use crate::theme::Theme;
 
-const HELP: [(&str, &str); 19] = [
+const HELP: [(&str, &str); 20] = [
     ("j k ↓ ↑", "move"),
     ("g G", "first / last"),
     ("ctrl-d ctrl-u", "half page down / up"),
@@ -27,6 +27,7 @@ const HELP: [(&str, &str); 19] = [
     ("o", "open the project page"),
     ("r", "refresh the index"),
     ("v", "view job output"),
+    ("T", "colour theme"),
     ("?", "this help"),
     ("q", "quit"),
 ];
@@ -37,57 +38,59 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
 }
 
-fn frame(buf: &mut Buffer, rect: Rect, title: &str, footer: &'static str) -> Rect {
+fn frame(buf: &mut Buffer, rect: Rect, t: &Theme, title: &str, footer: &'static str) -> Rect {
     let block = Block::bordered()
-        .border_style(ACCENT)
+        .border_style(t.accent())
         .title_top(format!(" {title} "))
-        .title_bottom(Line::from(footer).style(DIM).right_aligned());
+        .title_bottom(Line::from(footer).style(t.dim()).right_aligned());
     let inner = block.inner(rect);
     Clear.render(rect, buf);
+    buf.set_style(rect, t.base());
     block.render(rect, buf);
     inner
 }
 
-pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker) {
+pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) {
     let widest =
         picker.items.iter().map(|i| i.chars().count()).max().unwrap_or(0).max(picker.title.len() + 2);
     let rect = centered(area, widest as u16 + 6, picker.items.len() as u16 + 2);
-    let inner = frame(buf, rect, &picker.title, " enter ok · esc cancel ");
+    let inner = frame(buf, rect, t, &picker.title, " enter ok · esc cancel ");
 
     // Keep the selection visible when the list is taller than the screen.
     let first = picker.selected.saturating_sub(inner.height.saturating_sub(1) as usize);
     for ((i, item), y) in picker.items.iter().enumerate().skip(first).zip(inner.y..inner.bottom()) {
-        let style = if i == picker.selected { SELECTED } else { Style::new() };
+        let style = if i == picker.selected { t.selected() } else { Style::new() };
         buf.set_style(Rect::new(inner.x, y, inner.width, 1), style);
         buf.set_stringn(inner.x + 1, y, item, inner.width.saturating_sub(2) as usize, style);
     }
 }
 
-pub fn help(buf: &mut Buffer, area: Rect) {
-    let inner = frame(buf, centered(area, 62, HELP.len() as u16 + 2), "Keys", " any key closes ");
+pub fn help(buf: &mut Buffer, area: Rect, t: &Theme) {
+    let inner = frame(buf, centered(area, 62, HELP.len() as u16 + 2), t, "Keys", " any key closes ");
     for ((keys, what), y) in HELP.iter().zip(inner.y..inner.bottom()) {
-        buf.set_stringn(inner.x + 1, y, keys, 16, ACCENT);
+        buf.set_stringn(inner.x + 1, y, keys, 16, t.accent());
         buf.set_stringn(inner.x + 18, y, what, inner.width.saturating_sub(19) as usize, Style::new());
     }
 }
 
 /// The tail of the job log; older lines scroll off the top.
 pub fn log(buf: &mut Buffer, area: Rect, app: &App) {
+    let t = app.theme();
     let rect = centered(area, area.width.saturating_sub(4), area.height.saturating_sub(2));
-    let inner = frame(buf, rect, "Job output", " any key closes ");
+    let inner = frame(buf, rect, t, "Job output", " any key closes ");
     if app.log.is_empty() {
         buf.set_stringn(
             inner.x + 1,
             inner.y,
             "No jobs have run yet.",
             inner.width.saturating_sub(1) as usize,
-            DIM,
+            t.dim(),
         );
         return;
     }
     let skip = app.log.len().saturating_sub(inner.height as usize);
     for (line, y) in app.log.iter().skip(skip).zip(inner.y..inner.bottom()) {
-        let style = if line.starts_with("$ ") { ACCENT } else { Style::new() };
+        let style = if line.starts_with("$ ") { t.accent() } else { Style::new() };
         buf.set_stringn(inner.x + 1, y, line, inner.width.saturating_sub(1) as usize, style);
     }
 }
