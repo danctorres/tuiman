@@ -26,3 +26,10 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The indexer parses ~100 MB of JSON, so it wants optimisation, but it spends
+# minutes waiting on the network: whole-program LTO would only slow CI down.
+[profile.indexer]
+inherits = "release"
+lto = false
+codegen-units = 16
