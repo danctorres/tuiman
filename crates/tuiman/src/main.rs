@@ -186,7 +186,16 @@ fn run_in_terminal(job: &Job) -> bool {
 
 /// `url` was validated as a plain http(s) URL when the index was decoded.
 fn open_url(url: &str) -> bool {
-    let openers: &[&str] = if cfg!(target_os = "macos") { &["open"] } else { &["xdg-open", "wslview"] };
+    // Only spawning is checked: explorer.exe exits 1 on success and xdg-open
+    // may block until the browser closes. So under WSL, where xdg-open often
+    // exists but has no browser, the Windows openers go first.
+    let openers: &[&str] = if cfg!(target_os = "macos") {
+        &["open"]
+    } else if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        &["wslview", "explorer.exe", "xdg-open"]
+    } else {
+        &["xdg-open"]
+    };
     openers.iter().filter_map(|bin| paths::which(bin)).any(|bin| {
         let mut opener = Command::new(bin);
         opener.arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
