@@ -30,10 +30,14 @@ fn frame(buf: &mut Buffer, rect: Rect, t: &Theme, title: &str, footer: &'static 
 }
 
 pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) {
-    let widest =
-        picker.items.iter().map(|i| i.chars().count()).max().unwrap_or(0).max(picker.title.len() + 2);
-    let rect = centered(area, widest as u16 + 6, picker.items.len() as u16 + 2);
-    let inner = frame(buf, rect, t, &picker.title, " enter ok · esc cancel ");
+    const FOOTER: &str = " enter ok · esc cancel ";
+    let widest = picker.items.iter().map(|i| i.chars().count()).max().unwrap_or(0);
+    let widest = widest.max(picker.title.chars().count() + 2).max(FOOTER.chars().count());
+    // Roomy even for one short command: a margin all round and a sensible minimum width.
+    let rect = centered(area, (widest as u16 + 8).max(50), picker.items.len() as u16 + 4);
+    let inner = frame(buf, rect, t, &picker.title, FOOTER);
+    let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner }
+        .inner(ratatui::layout::Margin::new(0, 1));
 
     // Keep the selection visible when the list is taller than the screen.
     let first = picker.selected.saturating_sub(inner.height.saturating_sub(1) as usize);
