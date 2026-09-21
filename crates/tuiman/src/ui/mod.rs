@@ -293,7 +293,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
     const HINTS: &str =
-        " / search · s sort · S stars · L language · t installed · a installable · i install · x uninstall · ? help";
+        " / search · s sort · S stars · L language · t installed · a installable · i install · x uninstall · o open · ? help";
     match app.status.is_empty() {
         true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, t.dim()),
         false => buf.set_stringn(
