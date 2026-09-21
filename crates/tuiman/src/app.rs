@@ -13,6 +13,7 @@ use tuiman_index::{Catalog, Row};
 use crate::installed::{Choice, Installed};
 use crate::managers::{Action, ManagerId, MANAGERS};
 use crate::query::{Query, View};
+use crate::theme::{Theme, THEMES};
 
 const LOG_LINES: usize = 2000;
 pub const STAR_PRESETS: [u32; 7] = [0, 100, 500, 1_000, 5_000, 10_000, 50_000];
@@ -51,6 +52,8 @@ pub enum Effect {
     RunInTerminal(Job),
     OpenUrl(String),
     SaveInstalled,
+    /// Remember the theme called this for the next start.
+    SaveTheme(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +92,10 @@ pub enum PickerKind {
     MinStars,
     /// Language ids parallel to `items`; `None` is "any".
     Language(Vec<Option<u16>>),
+    /// Items are [`THEMES`]; moving previews, `original` is restored on cancel.
+    Theme {
+        original: usize,
+    },
 }
 
 pub struct App {
@@ -116,6 +123,8 @@ pub struct App {
     /// Height of the table body in lines, reported by the renderer's layout.
     pub page: usize,
     pub dirty: bool,
+    /// Index into [`THEMES`].
+    pub theme: usize,
     quit_armed: bool,
 }
 
@@ -141,10 +150,15 @@ impl App {
             today_days,
             page: 20,
             dirty: true,
+            theme: 0,
             quit_armed: false,
         };
         app.refilter(false);
         app
+    }
+
+    pub fn theme(&self) -> &'static Theme {
+        &THEMES[self.theme]
     }
 
     pub fn selected_row(&self) -> Option<Row> {
@@ -348,6 +362,14 @@ impl App {
                 return vec![Effect::RefreshIndex];
             }
             KeyCode::Char('v') => self.mode = Mode::Log,
+            KeyCode::Char('T') => {
+                self.mode = Mode::Picker(Picker {
+                    title: "Theme".into(),
+                    items: THEMES.iter().map(|t| t.name.to_owned()).collect(),
+                    selected: self.theme,
+                    kind: PickerKind::Theme { original: self.theme },
+                });
+            }
             KeyCode::Char('?') => self.mode = Mode::Help,
             _ => {}
         }
@@ -468,8 +490,17 @@ impl App {
                 };
                 return self.on_picked(picker);
             }
-            KeyCode::Esc | KeyCode::Char('q' | 'n') => self.mode = Mode::Normal,
+            KeyCode::Esc | KeyCode::Char('q' | 'n') => {
+                if let PickerKind::Theme { original } = picker.kind {
+                    self.theme = original;
+                }
+                self.mode = Mode::Normal;
+                return Vec::new();
+            }
             _ => {}
+        }
+        if let PickerKind::Theme { .. } = picker.kind {
+            self.theme = picker.selected;
         }
         Vec::new()
     }
@@ -483,6 +514,11 @@ impl App {
             PickerKind::Language(ids) => {
                 self.query.language = ids[picker.selected];
                 self.refilter(true);
+            }
+            PickerKind::Theme { .. } => {
+                self.theme = picker.selected;
+                self.status = format!("Theme: {}", self.theme().name);
+                return vec![Effect::SaveTheme(self.theme().name)];
             }
             PickerKind::Confirm { action, row, choices } => {
                 let choice = &choices[picker.selected];
@@ -603,6 +639,21 @@ mod tests {
         assert_eq!(app.view.rows.len(), 3);
         press(&mut app, KeyCode::Char('c'));
         assert_eq!(app.query, Query::default());
+    }
+
+    #[test]
+    fn theme_picker_previews_saves_and_cancels() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Char('T'));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.theme, 1, "moving previews");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.theme, 0, "esc restores");
+        press(&mut app, KeyCode::Char('T'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(press(&mut app, KeyCode::Enter), [Effect::SaveTheme(THEMES[2].name)]);
+        assert_eq!(app.theme, 2);
     }
 
     #[test]

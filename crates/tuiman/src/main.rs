@@ -15,6 +15,7 @@ mod managers;
 mod paths;
 mod query;
 mod term;
+mod theme;
 mod trace;
 mod ui;
 mod worker;
@@ -35,6 +36,7 @@ use crate::trace::Trace;
 /// Spinner frame time; the loop only wakes on it while something is running.
 const TICK: Duration = Duration::from_millis(80);
 const INSTALLED_CACHE: &str = "installed";
+const THEME_FILE: &str = "theme";
 
 fn main() -> ExitCode {
     let trace = Trace::start();
@@ -68,6 +70,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
     let installed = Installed::from_cache(&cache_dir.join(INSTALLED_CACHE), &catalog);
     trace.mark("installed cache read");
     let mut app = App::new(catalog, installed, today_days());
+    app.theme = theme::by_name(&std::fs::read_to_string(cache_dir.join(THEME_FILE)).unwrap_or_default());
     trace.mark("first query");
 
     term::install_panic_hook();
@@ -108,6 +111,9 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 Effect::Spawn(job) => worker::spawn_job(tx.clone(), &job),
                 Effect::SaveInstalled => {
                     app.installed.save_cache(&cache_dir.join(INSTALLED_CACHE), &app.catalog)
+                }
+                Effect::SaveTheme(name) => {
+                    let _ = std::fs::write(cache_dir.join(THEME_FILE), name);
                 }
                 Effect::OpenUrl(url) => {
                     app.status = match open_url(&url) {

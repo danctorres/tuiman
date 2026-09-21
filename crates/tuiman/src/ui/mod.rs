@@ -10,7 +10,7 @@ mod overlay;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget, Wrap};
 use ratatui::Frame;
@@ -22,9 +22,6 @@ use crate::query::Sort;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-const DIM: Style = Style::new().fg(Color::DarkGray);
-const ACCENT: Style = Style::new().fg(Color::Cyan);
-const SELECTED: Style = Style::new().fg(Color::Black).bg(Color::Cyan);
 const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 
 pub struct Areas {
@@ -58,6 +55,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let areas = areas(area);
     let buf = frame.buffer_mut();
+    buf.set_style(area, app.theme().base());
 
     if !areas.sidebar.is_empty() {
         sidebar(buf, areas.sidebar, app);
@@ -69,8 +67,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     status(buf, areas.status, app);
 
     match &app.mode {
-        Mode::Picker(picker) => overlay::picker(buf, area, picker),
-        Mode::Help => overlay::help(buf, area),
+        Mode::Picker(picker) => overlay::picker(buf, area, picker, app.theme()),
+        Mode::Help => overlay::help(buf, area, app.theme()),
         Mode::Log => overlay::log(buf, area, app),
         Mode::Normal | Mode::Search => {}
     }
@@ -82,7 +80,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
-    let block = Block::bordered().border_style(DIM).title(" Categories ");
+    let t = app.theme();
+    let block = Block::bordered().border_style(t.dim()).title(" Categories ");
     let inner = block.inner(area);
     block.render(area, buf);
 
@@ -97,8 +96,8 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     );
     for ((id, name, count), y) in entries.zip(inner.y..inner.bottom()) {
         let style = match (id == app.query.category, count) {
-            (true, _) => SELECTED,
-            (false, 0) => DIM,
+            (true, _) => t.selected(),
+            (false, 0) => t.dim(),
             (false, _) => Style::new(),
         };
         let line = Rect::new(inner.x, y, inner.width, 1);
@@ -106,7 +105,7 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(inner.x + 1, y, name, inner.width.saturating_sub(7) as usize, style);
         let count = count.to_string();
         let x = inner.right().saturating_sub(count.len() as u16 + 1);
-        buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { DIM });
+        buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { t.dim() });
     }
 }
 
@@ -139,13 +138,14 @@ impl Columns {
 }
 
 fn table(buf: &mut Buffer, area: Rect, app: &App) {
+    let t = app.theme();
     let title = match (&app.mode, app.query.text.is_empty()) {
         (Mode::Search, _) | (_, false) => {
             Line::from(vec![" /".into(), Span::styled(app.query.text.as_str(), BOLD), " ".into()])
         }
         _ => Line::from(" tuiman "),
     };
-    let border = if app.mode == Mode::Search { ACCENT } else { DIM };
+    let border = if app.mode == Mode::Search { t.accent() } else { t.dim() };
     let block =
         Block::bordered().border_style(border).title_top(title).title_top(filters(app).right_aligned());
     let inner = block.inner(area);
@@ -167,13 +167,13 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(inner.x + x + pad, y, text, (w - pad) as usize, style);
     };
 
-    put(buf, inner.y, cols.name, &header("NAME", Some(Sort::Name)), DIM);
-    put_right(buf, inner.y, cols.stars, &header("★", Some(Sort::Stars)), DIM);
+    put(buf, inner.y, cols.name, &header("NAME", Some(Sort::Name)), t.dim());
+    put_right(buf, inner.y, cols.stars, &header("★", Some(Sort::Stars)), t.dim());
     if let (Some(language), Some(age)) = (cols.language, cols.age) {
-        put(buf, inner.y, language, "LANGUAGE", DIM);
-        put_right(buf, inner.y, age, &header("PUSH", Some(Sort::Updated)), DIM);
+        put(buf, inner.y, language, "LANGUAGE", t.dim());
+        put_right(buf, inner.y, age, &header("PUSH", Some(Sort::Updated)), t.dim());
     }
-    put(buf, inner.y, cols.desc, "DESCRIPTION", DIM);
+    put(buf, inner.y, cols.desc, "DESCRIPTION", t.dim());
 
     if app.view.rows.is_empty() {
         let message = match (app.catalog.is_empty(), app.refreshing) {
@@ -181,7 +181,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             (true, false) => "No index yet (press r to download it)",
             (false, _) => "Nothing matches (press c to clear filters)",
         };
-        put(buf, inner.y + 2, (2, inner.width.saturating_sub(2)), message, DIM);
+        put(buf, inner.y + 2, (2, inner.width.saturating_sub(2)), message, t.dim());
         return;
     }
 
@@ -190,10 +190,10 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         let cat = &app.catalog;
         let selected = i == app.selected;
         let faded = cat.is_archived(row);
-        let text = if faded { DIM } else { Style::new() };
+        let text = if faded { t.dim() } else { Style::new() };
 
         if app.installed.is_installed(row) {
-            put(buf, y, (0, 1), "✓", Style::new().fg(Color::Green));
+            put(buf, y, (0, 1), "✓", Style::new().fg(t.installed));
         }
         put(buf, y, cols.name, cat.name(row), text.patch(BOLD));
         put_right(
@@ -201,15 +201,15 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             y,
             cols.stars,
             &format::stars(cat.stars(row)),
-            if faded { DIM } else { Style::new().fg(Color::Yellow) },
+            if faded { t.dim() } else { Style::new().fg(t.stars) },
         );
         if let (Some(language), Some(age)) = (cols.language, cols.age) {
-            put(buf, y, language, cat.language(row), DIM);
-            put_right(buf, y, age, &format::age(cat.pushed_days(row), app.today_days), DIM);
+            put(buf, y, language, cat.language(row), t.dim());
+            put_right(buf, y, age, &format::age(cat.pushed_days(row), app.today_days), t.dim());
         }
         put(buf, y, cols.desc, cat.desc(row), text);
         if selected {
-            buf.set_style(Rect::new(inner.x, y, inner.width, 1), SELECTED);
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), t.selected());
         }
     }
 }
@@ -232,7 +232,8 @@ fn filters(app: &App) -> Line<'static> {
 }
 
 fn details(buf: &mut Buffer, area: Rect, app: &App) {
-    let block = Block::bordered().border_style(DIM);
+    let t = app.theme();
+    let block = Block::bordered().border_style(t.dim());
     let inner = block.inner(area);
     block.render(area, buf);
     let Some(row) = app.selected_row() else { return };
@@ -240,25 +241,26 @@ fn details(buf: &mut Buffer, area: Rect, app: &App) {
 }
 
 fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
+    let t = app.theme();
     let cat = &app.catalog;
-    let mut head = vec![Span::styled(cat.name(row), BOLD.fg(Color::Cyan))];
-    head.push(Span::styled(format!("  ★ {}", format::stars(cat.stars(row))), Style::new().fg(Color::Yellow)));
+    let mut head = vec![Span::styled(cat.name(row), BOLD.fg(t.accent))];
+    head.push(Span::styled(format!("  ★ {}", format::stars(cat.stars(row))), Style::new().fg(t.stars)));
     for field in [cat.language(row), cat.license(row), cat.category_name(cat.category_id(row))] {
         if !field.is_empty() {
-            head.push(Span::styled(format!(" · {field}"), DIM));
+            head.push(Span::styled(format!(" · {field}"), t.dim()));
         }
     }
     if let Some(days) = cat.pushed_days(row) {
-        head.push(Span::styled(format!(" · pushed {}", format::date(days)), DIM));
+        head.push(Span::styled(format!(" · pushed {}", format::date(days)), t.dim()));
     }
     if cat.is_archived(row) {
-        head.push(Span::styled(" · archived", Style::new().fg(Color::Red)));
+        head.push(Span::styled(" · archived", Style::new().fg(t.archived)));
     }
     if cat.is_library(row) {
-        head.push(Span::styled(" · library", Style::new().fg(Color::Magenta)));
+        head.push(Span::styled(" · library", Style::new().fg(t.library)));
     }
 
-    let mut packages = vec![Span::styled("Packages: ", DIM)];
+    let mut packages = vec![Span::styled("Packages: ", t.dim())];
     let installed_via: Vec<&str> = app.installed.installed_via(row).collect();
     for (eco, package) in cat.packages(row) {
         let mut here =
@@ -266,22 +268,19 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
         let available = here.clone().next().is_some();
         let is_installed = here.any(|m| installed_via.contains(&m.name));
         let (mark, style) = match (is_installed, available) {
-            (true, _) => ("✓ ", Style::new().fg(Color::Green)),
+            (true, _) => ("✓ ", Style::new().fg(t.installed)),
             (false, true) => ("", Style::new()),
-            (false, false) => ("", DIM),
+            (false, false) => ("", t.dim()),
         };
         packages.push(Span::styled(format!("{mark}{}:{package}  ", eco.name()), style));
     }
     if packages.len() == 1 {
-        packages.push(Span::styled("none known (o opens the project page)", DIM));
+        packages.push(Span::styled("none known (o opens the project page)", t.dim()));
     }
 
     vec![
         Line::from(head),
-        Line::from(Span::styled(
-            cat.url(row),
-            Style::new().fg(Color::Blue).add_modifier(Modifier::UNDERLINED),
-        )),
+        Line::from(Span::styled(cat.url(row), Style::new().fg(t.link).add_modifier(Modifier::UNDERLINED))),
         Line::from(cat.desc(row)),
         Line::default(),
         Line::from(packages),
@@ -289,13 +288,14 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
 }
 
 fn status(buf: &mut Buffer, area: Rect, app: &App) {
+    let t = app.theme();
     if area.is_empty() {
         return;
     }
     const HINTS: &str =
         " / search · s sort · S stars · L language · t installed · a installable · i install · x uninstall · ? help";
     match app.status.is_empty() {
-        true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, DIM),
+        true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, t.dim()),
         false => buf.set_stringn(
             area.x + 1,
             area.y,
@@ -315,7 +315,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     };
     let text = format!(" {} {activity} ", SPINNER[app.spinner % SPINNER.len()]);
     let width = (text.chars().count() as u16).min(area.width);
-    buf.set_stringn(area.right() - width, area.y, &text, width as usize, ACCENT);
+    buf.set_stringn(area.right() - width, area.y, &text, width as usize, t.accent());
 }
 
 #[cfg(test)]
