@@ -1,0 +1,14 @@
+[package]
+name = "tuiman"
+description = "A fast TUI to discover, install and manage TUIs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tuiman-index = { path = "../tuiman-index" }
+
+[lints]
+workspace = true
