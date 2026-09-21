@@ -90,18 +90,18 @@ pub const HELP: [(&str, &str); 21] = [
     ("tab shift-tab", "next / previous category"),
     ("/", "fuzzy search (enter keeps, esc clears)"),
     ("s", "cycle sort: stars, name, last push"),
-    ("S", "minimum stars"),
+    ("*", "minimum stars"),
     ("L", "language"),
-    ("t", "installed only"),
+    ("I", "installed only"),
     ("a", "installable on this machine only"),
     ("A", "show archived projects"),
     ("c", "clear all filters"),
-    ("i enter", "install"),
-    ("x", "uninstall"),
+    ("enter", "install"),
+    ("u", "uninstall"),
     ("o", "open the project page"),
     ("r", "refresh the index"),
     ("v", "view job output"),
-    ("T", "colour theme"),
+    ("t", "colour theme"),
     ("?", "this help"),
     ("q", "quit"),
 ];
@@ -406,7 +406,7 @@ impl App {
                 self.query.sort = self.query.sort.next();
                 self.refilter(true);
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('I') => {
                 self.query.installed_only ^= true;
                 self.refilter(true);
             }
@@ -418,10 +418,10 @@ impl App {
                 self.query.show_archived ^= true;
                 self.refilter(true);
             }
-            KeyCode::Char('S') => self.open_stars_picker(),
+            KeyCode::Char('*') => self.open_stars_picker(),
             KeyCode::Char('L') => self.open_language_picker(),
-            KeyCode::Char('i') | KeyCode::Enter => self.open_confirm(Action::Install),
-            KeyCode::Char('x') => self.open_confirm(Action::Uninstall),
+            KeyCode::Enter => self.open_confirm(Action::Install),
+            KeyCode::Char('u') => self.open_confirm(Action::Uninstall),
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_row() {
                     return vec![Effect::OpenUrl(self.catalog.url(row).to_owned())];
@@ -433,7 +433,7 @@ impl App {
                 return vec![Effect::RefreshIndex];
             }
             KeyCode::Char('v') => self.mode = Mode::Log,
-            KeyCode::Char('T') => {
+            KeyCode::Char('t') => {
                 self.mode = Mode::Picker(Picker {
                     title: "Theme".into(),
                     items: THEMES.iter().map(|t| t.name.to_owned()).collect(),
@@ -755,7 +755,7 @@ mod tests {
     #[test]
     fn star_picker_applies_a_preset() {
         let mut app = app(&[]);
-        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('*'));
         for _ in 0..5 {
             press(&mut app, KeyCode::Char('j'));
         }
@@ -769,12 +769,12 @@ mod tests {
     #[test]
     fn theme_picker_previews_saves_and_cancels() {
         let mut app = app(&[]);
-        press(&mut app, KeyCode::Char('T'));
+        press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.theme, 1, "moving previews");
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.theme, 0, "esc restores");
-        press(&mut app, KeyCode::Char('T'));
+        press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(press(&mut app, KeyCode::Enter), [Effect::SaveTheme(THEMES[2].name)]);
@@ -820,8 +820,8 @@ mod tests {
         press(&mut app, KeyCode::Char('x'));
         assert_eq!(app.mode, Mode::Normal);
 
-        let help = Help { filter: Some("S".into()), ..Help::default() };
-        assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["S"], "keys match by case");
+        let help = Help { filter: Some("I".into()), ..Help::default() };
+        assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["I"], "keys match by case");
     }
 
     #[test]
@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn install_flow_spawns_then_rescans_and_runs_the_queue() {
         let mut app = app(&["brew", "cargo"]);
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
         let Mode::Picker(picker) = &app.mode else { panic!("no confirm") };
         assert_eq!(picker.items, ["brew install lazygit"]);
         let effects = press(&mut app, KeyCode::Enter);
@@ -848,7 +848,7 @@ mod tests {
 
         // A second install while the first runs is queued, not spawned.
         press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
         assert!(press(&mut app, KeyCode::Char('y')).is_empty());
         assert_eq!(app.queue.len(), 1);
 
@@ -867,7 +867,7 @@ mod tests {
         let mut app = app(&["apt"]);
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(selected_name(&app), "btop");
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
         let effects = press(&mut app, KeyCode::Enter);
         assert!(
             matches!(&effects[..], [Effect::RunInTerminal(job)] if job.argv[..2] == ["sudo", "apt-get"] || job.argv[0] == "apt-get")
@@ -877,10 +877,10 @@ mod tests {
     #[test]
     fn impossible_actions_explain_themselves() {
         let mut app = app(&["brew"]);
-        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Char('u'));
         assert!(app.status.contains("not installed"), "{}", app.status);
         press(&mut app, KeyCode::Char('G'));
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
         assert!(app.status.contains("packaged for nix"), "{}", app.status);
         assert_eq!(app.mode, Mode::Normal);
     }
@@ -889,7 +889,7 @@ mod tests {
     fn log_stays_bounded_across_jobs() {
         let mut app = app(&["brew"]);
         for _ in 0..3 {
-            press(&mut app, KeyCode::Char('i'));
+            press(&mut app, KeyCode::Enter);
             press(&mut app, KeyCode::Enter);
             for _ in 0..LOG_LINES {
                 app.update(Event::JobOutput("x".into()));
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn quitting_with_a_running_job_needs_two_presses() {
         let mut app = app(&["brew"]);
-        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Enter);
         assert!(press(&mut app, KeyCode::Char('q')).is_empty());
         assert_eq!(press(&mut app, KeyCode::Char('q')), [Effect::Quit]);
