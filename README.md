@@ -30,7 +30,8 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | Key | Action |
 | --- | --- |
 | `/` | fuzzy search names and descriptions |
-| `h` `l` | previous / next category |
+| `h` `l` / `←` `→` | focus categories / list; `j` `k` / `↑` `↓` then move in that panel |
+| `tab` `shift-tab` | next / previous category |
 | `s` | cycle sort: stars, name, last push |
 | `S` `L` | minimum stars, language |
 | `t` `a` `A` | installed only, installable here only, show archived |
@@ -39,6 +40,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `o` | open the project page |
 | `v` | view job output |
 | `T` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
+| `?` | key help (`/` searches it) |
 | `r` | refresh the index |
 
 The same core is scriptable:

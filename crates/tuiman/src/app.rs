@@ -69,8 +69,49 @@ pub enum Mode {
     Normal,
     Search,
     Picker(Picker),
-    Help,
+    Help(Help),
     Log,
+}
+
+/// The key list overlay.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Help {
+    /// `Some` once `/` is pressed; the text narrows the list.
+    pub filter: Option<String>,
+    /// Index into the narrowed list.
+    pub selected: usize,
+}
+
+pub const HELP: [(&str, &str); 21] = [
+    ("h l ← →", "focus categories / list"),
+    ("j k ↓ ↑", "move in the focused panel"),
+    ("g G", "first / last"),
+    ("ctrl-d ctrl-u", "half page down / up"),
+    ("tab shift-tab", "next / previous category"),
+    ("/", "fuzzy search (enter keeps, esc clears)"),
+    ("s", "cycle sort: stars, name, last push"),
+    ("S", "minimum stars"),
+    ("L", "language"),
+    ("t", "installed only"),
+    ("a", "installable on this machine only"),
+    ("A", "show archived projects"),
+    ("c", "clear all filters"),
+    ("i enter", "install"),
+    ("x", "uninstall"),
+    ("o", "open the project page"),
+    ("r", "refresh the index"),
+    ("v", "view job output"),
+    ("T", "colour theme"),
+    ("?", "this help"),
+    ("q", "quit"),
+];
+
+impl Help {
+    /// [`HELP`] rows whose keys or description contain the filter.
+    pub fn rows(&self) -> impl Iterator<Item = &'static (&'static str, &'static str)> + '_ {
+        let needle = self.filter.as_deref().unwrap_or("");
+        HELP.iter().filter(move |(keys, what)| keys.contains(needle) || what.contains(needle))
+    }
 }
 
 /// A modal list. What a selection means depends on `kind`.
@@ -125,6 +166,8 @@ pub struct App {
     pub dirty: bool,
     /// Index into [`THEMES`].
     pub theme: usize,
+    /// ←/→ move focus; ↑/↓ then move through categories instead of rows.
+    pub sidebar_focused: bool,
     quit_armed: bool,
 }
 
@@ -151,6 +194,7 @@ impl App {
             page: 20,
             dirty: true,
             theme: 0,
+            sidebar_focused: false,
             quit_armed: false,
         };
         app.refilter(false);
@@ -294,7 +338,11 @@ impl App {
                 Vec::new()
             }
             Mode::Picker(_) => self.on_picker_key(key.code),
-            Mode::Help | Mode::Log => {
+            Mode::Help(_) => {
+                self.on_help_key(key.code, ctrl);
+                Vec::new()
+            }
+            Mode::Log => {
                 self.mode = Mode::Normal;
                 Vec::new()
             }
@@ -304,6 +352,24 @@ impl App {
     fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, quit_armed: bool) -> Vec<Effect> {
         self.status.clear();
         let half_page = (self.page / 2).max(1) as isize;
+        if self.sidebar_focused {
+            let count = self.catalog.category_count() as isize + 1;
+            let step = match code {
+                KeyCode::Char('j') | KeyCode::Down => 1,
+                KeyCode::Char('k') | KeyCode::Up => -1,
+                KeyCode::Char('g') | KeyCode::Home => -count,
+                KeyCode::Char('G') | KeyCode::End => count,
+                KeyCode::Enter => {
+                    self.sidebar_focused = false;
+                    return Vec::new();
+                }
+                _ => 0,
+            };
+            if step != 0 {
+                self.step_category(step, false);
+                return Vec::new();
+            }
+        }
         match code {
             KeyCode::Char('q') => {
                 if self.running.is_none() || quit_armed {
@@ -320,9 +386,14 @@ impl App {
             KeyCode::PageUp => self.move_by(-(self.page as isize)),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(isize::MIN),
             KeyCode::Char('G') | KeyCode::End => self.move_by(isize::MAX),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.cycle_category(1),
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.cycle_category(-1),
-            KeyCode::Char('/') => self.mode = Mode::Search,
+            KeyCode::Char('h') | KeyCode::Left => self.sidebar_focused = true,
+            KeyCode::Char('l') | KeyCode::Right => self.sidebar_focused = false,
+            KeyCode::Tab => self.step_category(1, true),
+            KeyCode::BackTab => self.step_category(-1, true),
+            KeyCode::Char('/') => {
+                self.sidebar_focused = false;
+                self.mode = Mode::Search;
+            }
             KeyCode::Esc => {
                 self.query.text.clear();
                 self.refilter(true);
@@ -370,10 +441,45 @@ impl App {
                     kind: PickerKind::Theme { original: self.theme },
                 });
             }
-            KeyCode::Char('?') => self.mode = Mode::Help,
+            KeyCode::Char('?') => self.mode = Mode::Help(Help::default()),
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Arrows always move; typing edits the filter once `/` opened it.
+    fn on_help_key(&mut self, code: KeyCode, ctrl: bool) {
+        let Mode::Help(help) = &mut self.mode else { return };
+        let last = help.rows().count().saturating_sub(1);
+        match (code, &mut help.filter) {
+            (KeyCode::Down, _) | (KeyCode::Char('j'), None) => help.selected = (help.selected + 1).min(last),
+            (KeyCode::Up, _) | (KeyCode::Char('k'), None) => help.selected = help.selected.saturating_sub(1),
+            (KeyCode::Home | KeyCode::PageUp, _) | (KeyCode::Char('g'), None) => help.selected = 0,
+            (KeyCode::End | KeyCode::PageDown, _) | (KeyCode::Char('G'), None) => help.selected = last,
+            (KeyCode::Left | KeyCode::Right, Some(_)) => {}
+            (KeyCode::Char('/'), filter @ None) => *filter = Some(String::new()),
+            (KeyCode::Esc, filter @ Some(_)) => {
+                *filter = None;
+                help.selected = 0;
+            }
+            (KeyCode::Backspace, Some(filter)) => {
+                filter.pop();
+                help.selected = 0;
+            }
+            (KeyCode::Char('u'), Some(filter)) if ctrl => {
+                filter.clear();
+                help.selected = 0;
+            }
+            (KeyCode::Char('w'), Some(filter)) if ctrl => {
+                filter.truncate(filter.trim_end().rfind(' ').map_or(0, |i| i + 1));
+                help.selected = 0;
+            }
+            (KeyCode::Char(c), Some(filter)) if !ctrl && filter.len() < 32 => {
+                filter.push(c);
+                help.selected = 0;
+            }
+            _ => self.mode = Mode::Normal,
+        }
     }
 
     fn on_search_key(&mut self, code: KeyCode, ctrl: bool) {
@@ -399,11 +505,15 @@ impl App {
         self.refilter(false);
     }
 
-    /// Steps through "All" followed by each category.
-    fn cycle_category(&mut self, step: isize) {
+    /// Steps through "All" followed by each category, wrapping or stopping at the ends.
+    fn step_category(&mut self, step: isize, wrap: bool) {
         let count = self.catalog.category_count() as isize + 1;
         let current = self.query.category.map_or(0, |c| c as isize + 1);
-        let next = (current + step).rem_euclid(count);
+        let next =
+            if wrap { (current + step).rem_euclid(count) } else { (current + step).clamp(0, count - 1) };
+        if next == current {
+            return;
+        }
         self.query.category = (next > 0).then(|| (next - 1) as u8);
         self.refilter(true);
     }
@@ -620,11 +730,26 @@ mod tests {
     #[test]
     fn categories_cycle_through_all() {
         let mut app = app(&[]);
-        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Tab);
         assert_eq!(app.query.category, Some(0));
-        press(&mut app, KeyCode::Char('h'));
-        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::BackTab);
+        press(&mut app, KeyCode::BackTab);
         assert_eq!(app.query.category, Some(app.catalog.category_count() as u8 - 1));
+    }
+
+    #[test]
+    fn left_right_focus_panels_and_up_down_move_in_them() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.query.category, None, "stops at All");
+        press(&mut app, KeyCode::Down);
+        assert_eq!((app.query.category, app.selected), (Some(0), 0));
+        assert!(press(&mut app, KeyCode::Enter).is_empty(), "enter leaves the sidebar, not install");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Down);
+        assert_eq!((app.query.category, app.selected), (Some(0), 1));
     }
 
     #[test]
@@ -654,6 +779,49 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(press(&mut app, KeyCode::Enter), [Effect::SaveTheme(THEMES[2].name)]);
         assert_eq!(app.theme, 2);
+    }
+
+    #[test]
+    fn help_filters_after_slash() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "qx");
+        press(&mut app, KeyCode::Backspace);
+        press(&mut app, KeyCode::Left);
+        type_text(&mut app, "éu");
+        press(&mut app, KeyCode::Down);
+        let Mode::Help(help) = &app.mode else { panic!("help closed") };
+        assert_eq!(help.filter.as_deref(), Some("qéu"), "q is typed, not quit");
+        assert_eq!(help.selected, 0, "down clamps to the (empty) list");
+        type_text(&mut app, " ab cd");
+        let ctrl = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+        app.update(ctrl('w'));
+        let Mode::Help(help) = &app.mode else { panic!("help closed") };
+        assert_eq!(help.filter.as_deref(), Some("qéu ab "), "ctrl-w drops a word");
+        app.update(ctrl('u'));
+        let Mode::Help(help) = &app.mode else { panic!("help closed") };
+        assert_eq!(help.filter.as_deref(), Some(""), "ctrl-u clears");
+        press(&mut app, KeyCode::Esc);
+        let Mode::Help(help) = &app.mode else { panic!("esc closes help while searching") };
+        assert_eq!(help.filter, None, "first esc clears the search");
+        press(&mut app, KeyCode::Char('G'));
+        let Mode::Help(help) = &app.mode else { panic!("G closes help") };
+        assert_eq!(help.selected, HELP.len() - 1);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Up);
+        let Mode::Help(help) = &app.mode else { panic!("arrows close help") };
+        assert_eq!(help.selected, 1);
+        press(&mut app, KeyCode::Char('x'));
+        assert_eq!(app.mode, Mode::Normal);
+
+        let help = Help { filter: Some("S".into()), ..Help::default() };
+        assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["S"], "keys match by case");
     }
 
     #[test]
