@@ -298,7 +298,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
     const HINTS: &str =
-        " / search · s sort · S stars · L language · t installed · a installable · i install · x uninstall · o open · ? help";
+        " / search · s sort · * stars · L language · I installed · a installable · enter install · u uninstall · o open · ? help";
     match app.status.is_empty() {
         true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, t.dim()),
         false => buf.set_stringn(
@@ -384,7 +384,7 @@ mod tests {
             press(&mut app, '?');
             render(&mut app, w, h);
             press(&mut app, 'q');
-            press(&mut app, 'S');
+            press(&mut app, '*');
             render(&mut app, w, h);
             press(&mut app, 'q');
         }
@@ -402,7 +402,7 @@ mod tests {
 
         app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
         press(&mut app, 'j');
-        press(&mut app, 'i');
+        app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
         let all = render(&mut app, 100, 24).join("\n");
         assert!(all.contains("Install bottom?") && all.contains("cargo install --locked bottom"), "{all}");
     }
