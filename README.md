@@ -38,6 +38,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `i` `x` | install, uninstall (always shows the exact command first) |
 | `o` | open the project page |
 | `v` | view job output |
+| `T` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
 | `r` | refresh the index |
 
 The same core is scriptable:
