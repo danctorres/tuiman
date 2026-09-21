@@ -1,0 +1,11 @@
+[package]
+name = "tuiman-index"
+description = "Catalog schema and binary index format shared by tuiman and its indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
