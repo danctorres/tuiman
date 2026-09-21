@@ -1,0 +1,10 @@
+# Hand-curated corrections to the generated index, applied after every
+# automatic resolver. Keep this file small: prefer fixing a resolver.
+#
+# [[entry]]
+# repo = "owner/name"                  # GitHub repository as listed in awesome-tuis
+# packages = { brew = "pkg", apt = "pkg" }   # add or replace a package name
+# remove = ["crates"]                  # drop a wrong automatic match
+# exclude = true                       # leave the entry out of the index
+#
+# Ecosystems: brew crates go npm pypi apt dnf pacman aur nix

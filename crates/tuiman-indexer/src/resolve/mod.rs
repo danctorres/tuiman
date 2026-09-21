@@ -3,7 +3,9 @@
 //! the package's own metadata, never on the name alone.
 
 pub mod brew;
+pub mod bulk;
 pub mod registries;
+pub mod repology;
 
 use tuiman_index::Ecosystem;
 
