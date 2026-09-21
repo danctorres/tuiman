@@ -31,6 +31,12 @@ impl Http {
         Ok(resp.body_mut().with_config().limit(MAX_BODY).read_to_string()?)
     }
 
+    /// Streams a large body, for datasets that are decompressed on the fly.
+    pub fn get_reader(&self, url: &str) -> Result<impl std::io::Read> {
+        let resp = ok("GET", url, self.agent.get(url).call()?)?;
+        Ok(resp.into_body().into_with_config().limit(MAX_BODY).reader())
+    }
+
     /// `Ok(None)` on 404, which registries use for "no such package".
     pub fn get_json(&self, url: &str) -> Result<Option<Value>> {
         let resp = self.agent.get(url).header("Accept", "application/json").call()?;

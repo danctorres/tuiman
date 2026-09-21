@@ -6,6 +6,7 @@
 mod github;
 mod http;
 mod model;
+mod overrides;
 mod readme;
 mod resolve;
 
@@ -27,27 +28,36 @@ const README_URL: &str = "https://raw.githubusercontent.com/rothgar/awesome-tuis
 const MIN_ENTRIES: usize = 400;
 
 const USAGE: &str = "\
-usage: tuiman-indexer [--out DIR] [--readme FILE] [--no-registries]
+usage: tuiman-indexer [--out DIR] [--readme FILE] [--overrides FILE] [--no-registries]
 
   --out DIR         output directory (default: dist)
   --readme FILE     read the awesome-tuis README from FILE instead of the network
-  --no-registries   skip per-package registry lookups (crates.io, npm, PyPI)
+  --overrides FILE  hand-curated corrections (default: overrides.toml)
+  --no-registries   skip the rate-limited per-package lookups
+                    (crates.io, npm, PyPI, Repology)
 
 GITHUB_TOKEN must be set for stars, languages and registry candidates.";
 
 struct Args {
     out: PathBuf,
     readme: Option<PathBuf>,
+    overrides: PathBuf,
     registries: bool,
 }
 
 fn parse_args() -> std::result::Result<Args, String> {
-    let mut args = Args { out: PathBuf::from("dist"), readme: None, registries: true };
+    let mut args = Args {
+        out: PathBuf::from("dist"),
+        readme: None,
+        overrides: PathBuf::from("overrides.toml"),
+        registries: true,
+    };
     let mut argv = env::args().skip(1);
     while let Some(arg) = argv.next() {
         match arg.as_str() {
             "--out" => args.out = argv.next().ok_or("--out needs a value")?.into(),
             "--readme" => args.readme = Some(argv.next().ok_or("--readme needs a value")?.into()),
+            "--overrides" => args.overrides = argv.next().ok_or("--overrides needs a value")?.into(),
             "--no-registries" => args.registries = false,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other:?}")),
@@ -69,6 +79,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<()> {
     let http = Http::new();
+    let overrides = overrides::Overrides::load(&args.overrides)?;
 
     let readme = match &args.readme {
         Some(path) => fs::read_to_string(path)?,
@@ -92,19 +103,36 @@ fn run(args: &Args) -> Result<()> {
     }
 
     // Resolvers only read `items`; their findings are merged afterwards.
+    // One thread per data source, since each is bound by its own host.
     let found = thread::scope(|s| {
-        let brew = s.spawn(|| resolve::brew::resolve(&http, &items));
+        let bulk = [
+            ("brew", s.spawn(|| resolve::brew::resolve(&http, &items))),
+            ("aur", s.spawn(|| resolve::bulk::resolve_aur(&http, &items))),
+            ("nix", s.spawn(|| resolve::bulk::resolve_nix(&http, &items))),
+        ];
         let registries = args.registries.then(|| s.spawn(|| resolve::registries::resolve(&http, &items)));
-        let mut found = brew.join().expect("brew resolver panicked").unwrap_or_else(|e| {
-            eprintln!("warn: brew resolver failed: {e}");
-            Vec::new()
-        });
-        found.extend(registries.into_iter().flat_map(|h| h.join().expect("registry resolver panicked")));
+        let mut found = Vec::new();
+        for (name, handle) in bulk {
+            match handle.join().expect("resolver panicked") {
+                Ok(matches) => found.extend(matches),
+                // One source being down must not stop the daily index.
+                Err(e) => eprintln!("warn: {name} resolver failed: {e}"),
+            }
+        }
+        found.extend(registries.into_iter().flat_map(|h| h.join().expect("resolver panicked")));
         found
     });
     for (i, eco, package) in found {
         items[i].set_package(eco, &package);
     }
+
+    // Repology lookups are anchored on the URL-verified matches above.
+    if args.registries {
+        for (i, eco, package) in resolve::repology::resolve(&http, &items) {
+            items[i].set_package(eco, &package);
+        }
+    }
+    overrides.apply(&mut items);
 
     report(&items);
     write(args, &items)
