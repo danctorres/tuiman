@@ -63,6 +63,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `c` | clear filters |
 | `enter` | install, or uninstall if installed (always shows the exact command first) |
 | `o` | open the project page |
+| `y` | copy the name |
 | `v` | view job output |
 | `t` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
 | `?` | key help (`/` searches it) |
