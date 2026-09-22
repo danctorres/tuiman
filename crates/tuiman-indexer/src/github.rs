@@ -1,6 +1,9 @@
 //! GitHub enrichment: one aliased GraphQL query per batch of repositories
 //! returns stars, language, license, activity and the root build manifests.
 
+use std::thread;
+use std::time::Duration;
+
 use serde_json::{json, Value};
 
 use crate::http::Http;
@@ -31,29 +34,53 @@ pub fn enrich(http: &Http, token: &str, items: &mut [Item]) -> Result<Vec<usize>
     let mut dead = Vec::new();
     for (n, batch) in targets.chunks(BATCH).enumerate() {
         eprintln!("github: batch {}/{}", n + 1, targets.len().div_ceil(BATCH));
-        let repos: Vec<&str> = batch.iter().map(|&i| items[i].repo.as_deref().unwrap()).collect();
-        let response = http.post_json(ENDPOINT, token, &json!({ "query": query(&repos) }))?;
-        let Some(data) = response.get("data").filter(|d| d.is_object()) else {
-            return Err(format!("github: no data in response: {}", response["errors"]).into());
-        };
-        let errors = response["errors"].as_array().map(Vec::as_slice).unwrap_or_default();
-        for (alias, &i) in batch.iter().enumerate() {
-            let alias = format!("r{alias}");
-            match data.get(&alias) {
-                Some(repo) if repo.is_object() => apply(&mut items[i], repo),
-                _ if not_found(errors, &alias) => dead.push(i),
-                // Any other per-repository error is transient. Dropping the
-                // entry would publish a smaller catalog; keeping it without
-                // metadata is what a run with no token does anyway.
-                _ => eprintln!(
-                    "warn: github: {}: kept without metadata: {}",
-                    items[i].name,
-                    why(errors, &alias)
-                ),
-            }
-        }
+        fetch(http, token, items, batch, &mut dead)?;
     }
     Ok(dead)
+}
+
+/// Queries one batch. A gateway timeout is retried with backoff, then the
+/// batch is split in half, since a smaller query is what gets under GitHub's limit.
+fn fetch(http: &Http, token: &str, items: &mut [Item], batch: &[usize], dead: &mut Vec<usize>) -> Result<()> {
+    let repos: Vec<&str> = batch.iter().map(|&i| items[i].repo.as_deref().unwrap()).collect();
+    let body = json!({ "query": query(&repos) });
+    let mut response = http.post_json(ENDPOINT, token, &body)?;
+    for secs in [2, 4, 8] {
+        if response.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_secs(secs));
+        response = http.post_json(ENDPOINT, token, &body)?;
+    }
+    let response = match response {
+        Some(response) => response,
+        None if batch.len() > 1 => {
+            let (a, b) = batch.split_at(batch.len() / 2);
+            fetch(http, token, items, a, dead)?;
+            return fetch(http, token, items, b, dead);
+        }
+        None => {
+            let name = &items[batch[0]].name;
+            eprintln!("warn: github: {name}: kept without metadata: gateway timeout");
+            return Ok(());
+        }
+    };
+    let Some(data) = response.get("data").filter(|d| d.is_object()) else {
+        return Err(format!("github: no data in response: {}", response["errors"]).into());
+    };
+    let errors = response["errors"].as_array().map(Vec::as_slice).unwrap_or_default();
+    for (alias, &i) in batch.iter().enumerate() {
+        let alias = format!("r{alias}");
+        match data.get(&alias) {
+            Some(repo) if repo.is_object() => apply(&mut items[i], repo),
+            _ if not_found(errors, &alias) => dead.push(i),
+            // Any other per-repository error is transient. Dropping the
+            // entry would publish a smaller catalog; keeping it without
+            // metadata is what a run with no token does anyway.
+            _ => eprintln!("warn: github: {}: kept without metadata: {}", items[i].name, why(errors, &alias)),
+        }
+    }
+    Ok(())
 }
 
 /// GraphQL reports a missing repository as a null alias plus an error at that path.

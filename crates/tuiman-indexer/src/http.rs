@@ -47,11 +47,16 @@ impl Http {
         Ok(Some(resp.body_mut().with_config().limit(MAX_BODY).read_json()?))
     }
 
-    pub fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<Value> {
+    /// `Ok(None)` on 502/503/504, which GitHub returns when a query runs too long.
+    pub fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<Option<Value>> {
         let resp =
             self.agent.post(url).header("Authorization", &format!("Bearer {bearer}")).send_json(body)?;
+        if matches!(resp.status().as_u16(), 502..=504) {
+            eprintln!("warn: POST {url}: {}", resp.status());
+            return Ok(None);
+        }
         let mut resp = ok("POST", url, resp)?;
-        Ok(resp.body_mut().with_config().limit(MAX_BODY).read_json()?)
+        Ok(Some(resp.body_mut().with_config().limit(MAX_BODY).read_json()?))
     }
 }
 
