@@ -40,6 +40,15 @@ impl Theme {
         }
     }
 
+    /// `colour` sunk most of the way towards the background, for the backdrop
+    /// behind a modal. `None` when either end is not 24-bit and cannot blend.
+    pub fn sink(&self, colour: Color) -> Option<Color> {
+        match (colour, self.bg) {
+            (Color::Rgb(..), Color::Rgb(..)) => Some(mix(colour, self.bg, 0.6)),
+            _ => None,
+        }
+    }
+
     /// A point on the accent-to-link sweep that borders and the selection bar
     /// ride, or `None` for a theme on the terminal palette, which cannot blend
     /// and would band into two flat halves instead.
