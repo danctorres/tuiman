@@ -125,7 +125,10 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 }
                 Effect::Copy(text) => {
                     app.status = match copy(&text) {
-                        true => format!("Copied {text}"),
+                        true => match text.lines().count() {
+                            n @ 2.. => format!("Copied {n} lines"),
+                            _ => format!("Copied {text}"),
+                        },
                         false => "No clipboard tool found (pbcopy, clip.exe, wl-copy, xclip, xsel)".into(),
                     };
                     app.dirty = true;
