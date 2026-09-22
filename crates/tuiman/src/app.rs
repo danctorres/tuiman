@@ -84,7 +84,7 @@ pub struct Help {
     pub selected: usize,
 }
 
-pub const HELP: [(&str, &str); 21] = [
+pub const HELP: [(&str, &str); 20] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
     ("g G", "first / last"),
@@ -94,12 +94,11 @@ pub const HELP: [(&str, &str); 21] = [
     ("s", "cycle sort: stars, name, last push"),
     ("*", "minimum stars"),
     ("L", "language"),
-    ("I", "installed only"),
+    ("i", "installed only"),
     ("a", "installable on this machine only"),
     ("A", "show archived projects"),
     ("c", "clear all filters"),
-    ("enter", "install"),
-    ("u", "uninstall"),
+    ("enter", "install, or uninstall if installed"),
     ("o", "open the project page"),
     ("r", "refresh the index"),
     ("v", "view job output"),
@@ -408,7 +407,7 @@ impl App {
                 self.query.sort = self.query.sort.next();
                 self.refilter(true);
             }
-            KeyCode::Char('I') => {
+            KeyCode::Char('i') => {
                 self.query.installed_only ^= true;
                 self.refilter(true);
             }
@@ -422,8 +421,10 @@ impl App {
             }
             KeyCode::Char('*') => self.open_stars_picker(),
             KeyCode::Char('L') => self.open_language_picker(),
-            KeyCode::Enter => self.open_confirm(Action::Install),
-            KeyCode::Char('u') => self.open_confirm(Action::Uninstall),
+            KeyCode::Enter => match self.selected_row().is_some_and(|row| self.installed.is_installed(row)) {
+                true => self.open_confirm(Action::Uninstall),
+                false => self.open_confirm(Action::Install),
+            },
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_row() {
                     return vec![Effect::OpenUrl(self.catalog.url(row).to_owned())];
@@ -569,7 +570,6 @@ impl App {
                 Action::Install if self.catalog.is_library(row) => {
                     format!("{name} is a library, not an application")
                 }
-                Action::Install if self.installed.is_installed(row) => format!("{name} is already installed"),
                 Action::Install => {
                     let known: Vec<&str> = self.catalog.packages(row).map(|(eco, _)| eco.name()).collect();
                     match known.is_empty() {
@@ -823,8 +823,8 @@ mod tests {
         press(&mut app, KeyCode::Char('x'));
         assert_eq!(app.mode, Mode::Normal);
 
-        let help = Help { filter: Some("I".into()), ..Help::default() };
-        assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["I"], "keys match by case");
+        let help = Help { filter: Some("L".into()), ..Help::default() };
+        assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["L"], "keys match by case");
     }
 
     #[test]
@@ -863,6 +863,12 @@ mod tests {
         let effects = app.update(Event::Listing(brew, vec!["lazygit".into()]));
         assert_eq!(effects, [Effect::SaveInstalled]);
         assert!(app.installed.is_installed(2));
+
+        // Enter on an installed row offers to uninstall it.
+        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Enter);
+        let Mode::Picker(picker) = &app.mode else { panic!("no confirm") };
+        assert_eq!(picker.items, ["brew uninstall lazygit"]);
     }
 
     #[test]
@@ -880,8 +886,6 @@ mod tests {
     #[test]
     fn impossible_actions_explain_themselves() {
         let mut app = app(&["brew"]);
-        press(&mut app, KeyCode::Char('u'));
-        assert!(app.status.contains("not installed"), "{}", app.status);
         press(&mut app, KeyCode::Char('G'));
         press(&mut app, KeyCode::Enter);
         assert!(app.status.contains("packaged for nix"), "{}", app.status);
