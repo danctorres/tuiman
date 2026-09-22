@@ -147,6 +147,7 @@ mod tests {
         let job = Job {
             action: Action::Install,
             manager: 0,
+            row: 0,
             title: "test".into(),
             argv: argv.iter().map(|s| (*s).to_owned()).collect(),
         };
