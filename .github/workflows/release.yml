@@ -2,7 +2,8 @@ name: Release
 
 # On a `v*` tag: builds tuiman for Linux (static musl) and macOS, creates the
 # GitHub release and uploads the tarballs with a SHA256SUMS file and build
-# provenance attestations, then updates the Homebrew tap.
+# provenance attestations, publishes the crates to crates.io, then updates the
+# Homebrew tap.
 
 on:
   push:
@@ -25,6 +26,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check tag matches Cargo.toml version
+        run: grep -qx "version = \"${VERSION#v}\"" Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -67,6 +70,22 @@ jobs:
           gh release view "$VERSION" >/dev/null 2>&1 ||
             gh release create "$VERSION" --verify-tag --generate-notes
           gh release upload "$VERSION" dist/* --clobber
+
+  # Publishes tuiman-index and tuiman to crates.io via trusted publishing
+  # (configured per crate on crates.io for this repo and release.yml).
+  crates:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - run: cargo publish --workspace --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Fills pkg/tuiman.rb from SHA256SUMS and pushes it to the tap. Needs the
   # HOMEBREW_TAP_TOKEN secret (contents: write on danctorres/homebrew-tap).
