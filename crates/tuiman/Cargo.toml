@@ -6,11 +6,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["tui", "terminal", "package-manager", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 nucleo-matcher = "0.3"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
-tuiman-index = { path = "../tuiman-index" }
+tuiman-index = { path = "../tuiman-index", version = "0.1.0" }
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 [lints]
