@@ -8,7 +8,7 @@ use std::thread;
 use tuiman_index::{Catalog, Row};
 
 use crate::app::{IndexUpdate, Job};
-use crate::installed::Installed;
+use crate::installed::{self, Installed};
 use crate::managers::{self, Action, MANAGERS};
 use crate::query::{Query, Sort, View};
 use crate::{fetch, worker};
@@ -219,20 +219,7 @@ fn change(action: Action, args: &[String]) -> CliResult {
         Some(via) => choices.iter().find(|c| MANAGERS[c.manager as usize].name == via),
     };
     let Some(choice) = choice else {
-        let known: Vec<&str> = catalog.packages(row).map(|(eco, _)| eco.name()).collect();
-        return fail(match action {
-            Action::Uninstall => {
-                format!("{} is not installed through a package manager tuiman knows", catalog.name(row))
-            }
-            Action::Install if known.is_empty() => {
-                format!("no known package for {}; see {}", catalog.name(row), catalog.url(row))
-            }
-            Action::Install => format!(
-                "{} is packaged for: {}; no matching manager is available here",
-                catalog.name(row),
-                known.join(", ")
-            ),
-        });
+        return fail(installed::impossible(&catalog, row, action, &format!("see {}", catalog.url(row))));
     };
 
     let manager = &MANAGERS[choice.manager as usize];
