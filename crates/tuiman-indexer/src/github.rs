@@ -12,7 +12,7 @@ use crate::Result;
 
 const ENDPOINT: &str = "https://api.github.com/graphql";
 /// Each repository costs six object lookups, so batches stay modest.
-const BATCH: usize = 40;
+const BATCH: usize = 25;
 
 const FRAGMENT: &str = r#"
 fragment F on Repository {
