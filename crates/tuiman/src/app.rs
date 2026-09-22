@@ -186,6 +186,8 @@ pub struct App {
     quit_armed: bool,
     /// Digits typed so far, repeating the next motion as in vim's `3j`.
     pub count: usize,
+    /// The last command key with its count, echoed like vim's showcmd.
+    pub last_key: String,
 }
 
 impl App {
@@ -215,6 +217,7 @@ impl App {
             sidebar_visible: true,
             quit_armed: false,
             count: 0,
+            last_key: String::new(),
         };
         app.refilter(false);
         app
@@ -349,8 +352,19 @@ impl App {
             _ => None,
         } {
             self.count = (count * 10 + digit as usize).min(99_999);
+            self.last_key.clear();
             return Vec::new();
         }
+        // Text typed into a search box is already on screen, so only commands are echoed.
+        self.last_key = match self.takes_count() {
+            true => format!(
+                "{}{}{}",
+                if count > 0 { count.to_string() } else { String::new() },
+                if ctrl { "^" } else { "" },
+                key.code
+            ),
+            false => String::new(),
+        };
         match self.mode {
             Mode::Normal => self.on_normal_key(key.code, ctrl, armed, count),
             Mode::Search => {
