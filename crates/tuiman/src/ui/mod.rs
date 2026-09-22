@@ -29,11 +29,53 @@ const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 const POWER_CAP: &str = "\u{e0b2}";
 const POWER_SEP: &str = " \u{e0b1} ";
 
-/// Whether to draw Nerd Font glyphs in the status bar. Opt-in, since a
-/// terminal without a patched font shows them as boxes.
-fn powerline() -> bool {
+/// Whether to draw Nerd Font glyphs. Opt-in, since a terminal without a
+/// patched font shows them as boxes.
+fn nerd() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TUIMAN_POWERLINE").is_some_and(|v| v != "0"))
+    *ON.get_or_init(|| std::env::var_os("TUIMAN_NERD_FONT").is_some_and(|v| v != "0"))
+}
+
+/// The glyph for a category or language, or nothing for a name with none and
+/// for a terminal without the font. The table is matched by name because the
+/// index numbers its categories in whatever order it was built in.
+fn icon(name: &str) -> &'static str {
+    if !nerd() {
+        return "";
+    }
+    match name {
+        "Dashboards" => "\u{f0e4}",
+        "Development" => "\u{f121}",
+        "Docker/LXC/K8s" => "\u{f308}",
+        "Editors" => "\u{f044}",
+        "File Managers" => "\u{f07b}",
+        "Games" => "\u{f11b}",
+        "Libraries" => "\u{f02d}",
+        "Messaging" => "\u{f075}",
+        "Multimedia" => "\u{f001}",
+        "Productivity" => "\u{f0ae}",
+        "Screensavers" => "\u{f108}",
+        "Web" => "\u{f0ac}",
+        "All" | "Miscellaneous" => "\u{f013}",
+        "C" => "\u{e61e}",
+        "C++" => "\u{e61d}",
+        "C#" => "\u{f81a}",
+        "Go" => "\u{e627}",
+        "Haskell" => "\u{e777}",
+        "Python" => "\u{e73c}",
+        "Rust" => "\u{e7a8}",
+        "Shell" => "\u{f489}",
+        "TypeScript" => "\u{e628}",
+        _ => "",
+    }
+}
+
+/// `name` with its icon in front, when there is one.
+fn with_icon(name: &str) -> std::borrow::Cow<'_, str> {
+    match icon(name) {
+        "" => name.into(),
+        glyph => format!("{glyph} {name}").into(),
+    }
 }
 
 pub struct Areas {
@@ -145,6 +187,10 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
             )
         }),
     );
+    // Each row is backed by a bar as long as its share of the largest
+    // category, which turns the counts into a histogram for nothing.
+    let busiest = app.view.category_counts.iter().copied().max().unwrap_or(0).max(1) as usize;
+    let meter = t.meter();
     for ((id, name, count), y) in entries.zip(inner.y..inner.bottom()) {
         let style = match (id == app.query.category, count) {
             (true, _) => cursor(t, app.sidebar_focused),
@@ -153,7 +199,14 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
         };
         let line = Rect::new(inner.x, y, inner.width, 1);
         buf.set_style(line, style);
-        buf.set_stringn(inner.x + 1, y, name, inner.width.saturating_sub(7) as usize, style);
+        if let (Some(meter), Some(_)) = (meter, id) {
+            let width = (count as usize * inner.width as usize / busiest) as u16;
+            buf.set_style(Rect::new(inner.x, y, width, 1), meter);
+        }
+        let label = with_icon(name);
+        // Room for the icon, when there is one in front of the name.
+        let room = inner.width.saturating_sub(7) as usize + label.chars().count() - name.chars().count();
+        buf.set_stringn(inner.x + 1, y, &label, room, style);
         let count = count.to_string();
         let x = inner.right().saturating_sub(count.len() as u16 + 1);
         buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { t.dim() });
@@ -188,7 +241,8 @@ impl Columns {
         let number = wide.then(|| next(rows.to_string().len() as u16));
         let name = next(name_w);
         let stars = next(6);
-        let language = wide.then(|| next(11));
+        // Room for the icon, when there is one in front of the name.
+        let language = wide.then(|| next(if nerd() { 13 } else { 11 }));
         let age = wide.then(|| next(6));
         let desc = (x, width.saturating_sub(x));
         Columns { number, name, stars, language, age, desc }
@@ -248,13 +302,15 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
+    rail(buf, area, app.view.rows.len(), app.offset, inner.height.saturating_sub(1) as usize, t);
     let stripe = t.stripe();
     let body = (inner.y + 1..inner.bottom()).zip(app.view.rows.iter().enumerate().skip(app.offset));
     for (y, (i, &row)) in body {
         let cat = &app.catalog;
         let selected = i == app.selected;
         let faded = cat.is_archived(row);
-        let text = if faded { t.dim() } else { Style::new() };
+        // Archived projects read as set aside, not merely quiet.
+        let text = if faded { t.dim().add_modifier(Modifier::ITALIC) } else { Style::new() };
         // Alternating rows sit on a shade of the background, so a wide table
         // still reads across. Themes on the terminal palette get no stripe.
         if i % 2 == 1 {
@@ -282,13 +338,29 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             if faded { t.dim() } else { t.heat(cat.stars(row)) },
         );
         if let (Some(language), Some(age)) = (cols.language, cols.age) {
-            put(buf, y, language, cat.language(row), t.dim());
+            put(buf, y, language, &with_icon(cat.language(row)), t.dim());
             put_right(buf, y, age, &format::age(cat.pushed_days(row), app.today_days), t.dim());
         }
         put(buf, y, cols.desc, cat.desc(row), text);
         if selected {
             cursor_bar(buf, Rect::new(inner.x, y, inner.width, 1), t, !app.sidebar_focused);
         }
+    }
+}
+
+/// A thumb on the panel's right border showing where the page sits in the
+/// list. Drawn only when there is more than fits, and only over its own column.
+fn rail(buf: &mut Buffer, area: Rect, rows: usize, offset: usize, page: usize, t: &Theme) {
+    if page == 0 || rows <= page || area.height < 4 {
+        return;
+    }
+    let track = area.height - 2;
+    let size = (page * track as usize / rows).max(1) as u16;
+    let span = rows - page;
+    let top = (offset * (track - size) as usize).div_ceil(span.max(1)) as u16;
+    let x = area.right() - 1;
+    for y in area.y + 1 + top..(area.y + 1 + top + size).min(area.bottom() - 1) {
+        buf[(x, y)].set_symbol("┃").set_fg(t.accent);
     }
 }
 
@@ -393,9 +465,15 @@ fn filters(app: &App) -> Line<'static> {
 
 fn details(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
+    let title = match app.selected_row() {
+        Some(row) => format!(" {} ", app.catalog.name(row)),
+        None => " Details ".to_owned(),
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(t.dim())
+        .title_style(t.dim())
+        .title(title)
         .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     block.render(area, buf);
@@ -469,7 +547,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         // A running job gets a solid badge; background scans stay a quiet spinner.
         let solid = app.running.is_some();
         let style = if solid { t.selected().patch(BOLD) } else { t.accent() };
-        let cap = powerline() && solid;
+        let cap = nerd() && solid;
         let width = (text.chars().count() as u16 + u16::from(cap)).min(area.width);
         right -= width;
         let x = match cap {
@@ -522,7 +600,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     ];
     const HELP: (&str, &str) = ("?", "help");
     // Same width either way, so the fitting maths below does not care which.
-    let divider: &str = if powerline() { POWER_SEP } else { " │ " };
+    let divider: &str = if nerd() { POWER_SEP } else { " │ " };
     const GAP: &str = "  ";
     let end = right.saturating_sub(1);
     let draw = |buf: &mut Buffer, x: u16, sep: &str, (key, label): (&str, &str)| {
@@ -667,6 +745,26 @@ mod tests {
     }
 
     #[test]
+    fn the_rail_tracks_the_page() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 12));
+        let t = &THEMES[crate::theme::by_name("nord")];
+        let area = Rect::new(0, 0, 10, 12);
+        let thumb = |buf: &Buffer| -> Vec<u16> {
+            (area.y..area.bottom()).filter(|&y| buf[(area.right() - 1, y)].symbol() == "┃").collect()
+        };
+        rail(&mut buf, area, 10, 0, 10, t);
+        assert!(thumb(&buf).is_empty(), "a list that fits gets no rail");
+        rail(&mut buf, area, 100, 0, 10, t);
+        let top = thumb(&buf);
+        assert_eq!(top.first(), Some(&(area.y + 1)), "at the top it sits under the corner");
+        buf.reset();
+        rail(&mut buf, area, 100, 90, 10, t);
+        let bottom = thumb(&buf);
+        assert_eq!(bottom.last(), Some(&(area.bottom() - 2)), "at the end it reaches the last row");
+        assert_eq!(top.len(), bottom.len(), "the thumb keeps its size");
+    }
+
+    #[test]
     fn narrow_layout_drops_sidebar_and_columns() {
         let mut app = app();
         let screen = render(&mut app, 60, 12);
@@ -749,7 +847,8 @@ mod tests {
         assert!(status.contains("enter install/uninstall"), "{status}");
         assert!(!status.contains("q quit"), "{status}");
         let wide = render(&mut app, 200, 20).pop().unwrap();
-        assert!(wide.contains("q quit │ ? help"), "{wide}");
+        let divider: &str = if nerd() { POWER_SEP } else { " │ " };
+        assert!(wide.contains(&format!("q quit{divider}? help")), "{wide}");
     }
 
     #[test]
