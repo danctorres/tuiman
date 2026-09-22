@@ -11,6 +11,14 @@ installs or uninstalls them through the package managers you already have.
 
 ## Install
 
+Homebrew (macOS and Linux):
+
+```sh
+brew install danctorres/tap/tuiman
+```
+
+With Cargo:
+
 ```sh
 cargo install tuiman
 ```
