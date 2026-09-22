@@ -567,9 +567,6 @@ impl App {
                 Action::Uninstall => {
                     format!("{name} is not installed through a package manager tuiman knows")
                 }
-                Action::Install if self.catalog.is_library(row) => {
-                    format!("{name} is a library, not an application")
-                }
                 Action::Install => {
                     let known: Vec<&str> = self.catalog.packages(row).map(|(eco, _)| eco.name()).collect();
                     match known.is_empty() {

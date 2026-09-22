@@ -36,6 +36,8 @@ pub(super) fn assign(
     eco: Ecosystem,
     by_repo: &HashMap<String, (Rank, String)>,
 ) -> Vec<Found> {
+    // Bulk dumps match on URL alone, so a library would pick up its library
+    // package (`python-rich`); only the registries can prove a binary.
     let apps = items.iter().enumerate().filter(|(_, item)| !item.library);
     apps.filter_map(|(i, item)| {
         let keys = [&item.repo, &item.former_repo];
