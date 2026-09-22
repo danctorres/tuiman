@@ -382,10 +382,14 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(right, area.y, &text, width as usize, style);
     }
     // The pending count, as vim's showcmd does, so a stray digit isn't a surprise.
-    if app.count > 0 {
-        let text = format!(" {} ", app.count);
-        let width = (text.len() as u16).min(right - area.x);
-        buf.set_stringn(right - width, area.y, &text, width as usize, t.accent().patch(BOLD));
+    let (text, style) = match app.count {
+        0 => (app.last_key.clone(), t.dim()),
+        _ => (app.count.to_string(), t.accent().patch(BOLD)),
+    };
+    if !text.is_empty() {
+        let text = format!(" {text} ");
+        let width = (text.chars().count() as u16).min(right - area.x);
+        buf.set_stringn(right - width, area.y, &text, width as usize, style);
     }
 }
 
@@ -478,7 +482,16 @@ mod tests {
         assert!(status.trim_end().ends_with(" 12"), "{status}");
         press(&mut app, 'j');
         let status = render(&mut app, 120, 40).pop().unwrap();
-        assert!(!status.trim_end().ends_with(" 12"), "the motion used it up: {status}");
+        assert!(status.trim_end().ends_with(" 12j"), "the motion is echoed with its count: {status}");
+    }
+
+    #[test]
+    fn typed_search_text_is_not_echoed() {
+        let mut app = app();
+        press(&mut app, '/');
+        press(&mut app, 'x');
+        let status = render(&mut app, 120, 40).pop().unwrap();
+        assert!(!status.trim_end().ends_with('x'), "{status}");
     }
 
     #[test]
