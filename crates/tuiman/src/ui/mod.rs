@@ -401,7 +401,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     // Grouped as act | find | app. Hints that don't fit are dropped whole
     // from the end, but "? help" always stays, since it lists them all.
     const HINTS: [&[(&str, &str)]; 3] = [
-        &[("enter", "install/uninstall"), ("o", "open")],
+        &[("enter", "install/uninstall"), ("u", "upgrade"), ("o", "open")],
         &[
             ("/", "search"),
             ("s", "sort"),

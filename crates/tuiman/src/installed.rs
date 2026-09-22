@@ -76,7 +76,7 @@ impl Installed {
     pub fn choices(&self, catalog: &Catalog, row: Row, action: Action) -> Vec<Choice> {
         let mask = match action {
             Action::Install => self.available[row as usize] & !self.installed[row as usize],
-            Action::Uninstall => self.installed[row as usize],
+            Action::Uninstall | Action::Upgrade => self.installed[row as usize],
         };
         let mut choices: Vec<Choice> = catalog
             .packages(row)
@@ -148,7 +148,7 @@ impl Installed {
 /// to reach the project page from where the message is shown.
 pub fn impossible(catalog: &Catalog, row: Row, action: Action, page_hint: &str) -> String {
     let name = catalog.name(row);
-    if action == Action::Uninstall {
+    if action != Action::Install {
         return format!("{name} is not installed through a package manager tuiman knows");
     }
     let known: Vec<&str> = catalog.packages(row).map(|(eco, _)| eco.name()).collect();

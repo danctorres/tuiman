@@ -140,5 +140,4 @@ check for a pause request.
 - Windows
 - Installing from GitHub release assets
 - Detecting TUIs installed outside a package manager
-- Upgrades
 - Configuration and theming
