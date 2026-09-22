@@ -347,49 +347,6 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     if area.is_empty() {
         return;
     }
-    const HINTS: [&str; 12] = [
-        "/ search",
-        "s sort",
-        "* stars",
-        "L language",
-        "i installed",
-        "a installable",
-        "c clear",
-        "enter install/uninstall",
-        "o open",
-        "t theme",
-        "? help",
-        "q quit",
-    ];
-    match app.status.is_empty() {
-        true => {
-            let mut x = area.x + 1;
-            for (i, hint) in HINTS.iter().enumerate() {
-                if i > 0 {
-                    x = buf.set_stringn(x, area.y, " · ", area.right().saturating_sub(x) as usize, t.dim()).0;
-                }
-                let style = match app.flash > 0 && hint_is_for(hint, &app.last_key) {
-                    true => t.flash(flash_level(app.flash)),
-                    false => t.dim(),
-                };
-                x = buf.set_stringn(x, area.y, hint, area.right().saturating_sub(x) as usize, style).0;
-            }
-        }
-        false => {
-            buf.set_stringn(
-                area.x + 1,
-                area.y,
-                &app.status,
-                area.width.saturating_sub(1) as usize,
-                match app.status.chars().next() {
-                    Some('✓') => Style::new().fg(t.installed).patch(BOLD),
-                    Some('✗') => Style::new().fg(t.archived).patch(BOLD),
-                    _ => Style::new(),
-                },
-            );
-        }
-    };
-
     let scanning = if app.detecting { 1 } else { app.scans_pending };
     let activity = match (&app.running, app.refreshing, scanning) {
         (Some(job), _, _) if app.queue.is_empty() => Some(job.title.clone()),
@@ -415,8 +372,72 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     if !text.is_empty() {
         let text = format!(" {text} ");
         let width = (text.chars().count() as u16).min(right - area.x);
-        buf.set_stringn(right - width, area.y, &text, width as usize, style);
+        right -= width;
+        buf.set_stringn(right, area.y, &text, width as usize, style);
     }
+
+    if !app.status.is_empty() {
+        buf.set_stringn(
+            area.x + 1,
+            area.y,
+            &app.status,
+            right.saturating_sub(area.x + 1) as usize,
+            match app.status.chars().next() {
+                Some('✓') => Style::new().fg(t.installed).patch(BOLD),
+                Some('✗') => Style::new().fg(t.archived).patch(BOLD),
+                _ => Style::new(),
+            },
+        );
+        return;
+    }
+
+    // Grouped as act | find | app. Hints that don't fit are dropped whole
+    // from the end, but "? help" always stays, since it lists them all.
+    const HINTS: [&[(&str, &str)]; 3] = [
+        &[("enter", "install/uninstall"), ("o", "open")],
+        &[
+            ("/", "search"),
+            ("s", "sort"),
+            ("*", "stars"),
+            ("L", "language"),
+            ("i", "installed"),
+            ("a", "installable"),
+            ("c", "clear"),
+        ],
+        &[("t", "theme"), ("q", "quit")],
+    ];
+    const HELP: (&str, &str) = ("?", "help");
+    const GROUP: &str = " │ ";
+    const GAP: &str = "  ";
+    let end = right.saturating_sub(1);
+    let draw = |buf: &mut Buffer, x: u16, sep: &str, (key, label): (&str, &str)| {
+        let lit = app.flash > 0 && hint_is_for(key, &app.last_key);
+        let (key_style, label_style) = match lit {
+            true => (t.flash(flash_level(app.flash)), t.flash(flash_level(app.flash))),
+            false => (t.accent().patch(BOLD), t.dim()),
+        };
+        let x = buf.set_stringn(x, area.y, sep, end.saturating_sub(x) as usize, t.dim()).0;
+        let x = buf.set_stringn(x, area.y, key, end.saturating_sub(x) as usize, key_style).0;
+        buf.set_stringn(x, area.y, format!(" {label}"), end.saturating_sub(x) as usize, label_style).0
+    };
+    let width =
+        |sep: &str, (key, label): (&str, &str)| (sep.chars().count() + key.len() + 1 + label.len()) as u16;
+    let help_end = end.saturating_sub(width(GROUP, HELP));
+    let mut x = area.x + 1;
+    'groups: for (g, group) in HINTS.iter().enumerate() {
+        for (i, &hint) in group.iter().enumerate() {
+            let sep = match (g, i) {
+                (0, 0) => "",
+                (_, 0) => GROUP,
+                _ => GAP,
+            };
+            if x + width(sep, hint) > help_end {
+                break 'groups;
+            }
+            x = draw(buf, x, sep, hint);
+        }
+    }
+    draw(buf, x, if x == area.x + 1 { "" } else { GROUP }, HELP);
 }
 
 /// How lit the hint is with `left` ticks to go: eases up to full over the
@@ -427,10 +448,9 @@ fn flash_level(left: u8) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// Whether a hint such as "s sort" or "enter install/uninstall" is for the
-/// echoed key, which may carry a count ("3s") and is spelt "Enter" by crossterm.
-fn hint_is_for(hint: &str, pressed: &str) -> bool {
-    let key = hint.split(' ').next().unwrap_or_default();
+/// Whether a hint's key such as "s" or "enter" is for the echoed key, which
+/// may carry a count ("3s") and is spelt "Enter" by crossterm.
+fn hint_is_for(key: &str, pressed: &str) -> bool {
     let pressed = pressed.trim_start_matches(|c: char| c.is_ascii_digit());
     match key.len() {
         1 => pressed == key,
@@ -541,12 +561,23 @@ mod tests {
 
     #[test]
     fn hints_match_the_pressed_key() {
-        assert!(hint_is_for("s sort", "s"));
-        assert!(hint_is_for("s sort", "3s"));
-        assert!(!hint_is_for("L language", "l"), "case matters for letters");
-        assert!(hint_is_for("enter install/uninstall", "Enter"));
-        assert!(!hint_is_for("s sort", "^s"));
-        assert!(!hint_is_for("s sort", ""));
+        assert!(hint_is_for("s", "s"));
+        assert!(hint_is_for("s", "3s"));
+        assert!(!hint_is_for("L", "l"), "case matters for letters");
+        assert!(hint_is_for("enter", "Enter"));
+        assert!(!hint_is_for("s", "^s"));
+        assert!(!hint_is_for("s", ""));
+    }
+
+    #[test]
+    fn narrow_status_drops_whole_hints_but_keeps_help() {
+        let mut app = app();
+        let status = render(&mut app, 60, 20).pop().unwrap();
+        assert!(status.contains("? help"), "{status}");
+        assert!(status.contains("enter install/uninstall"), "{status}");
+        assert!(!status.contains("q quit"), "{status}");
+        let wide = render(&mut app, 200, 20).pop().unwrap();
+        assert!(wide.contains("q quit │ ? help"), "{wide}");
     }
 
     #[test]
