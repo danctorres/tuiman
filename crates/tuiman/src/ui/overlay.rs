@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Widget};
+use ratatui::widgets::{Block, BorderType, Clear, Widget};
 
 use crate::app::{App, Help, Picker, PickerKind, HELP};
 use crate::theme::{Theme, THEMES};
@@ -19,6 +19,7 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 
 fn frame(buf: &mut Buffer, rect: Rect, t: &Theme, title: &str, footer: &'static str) -> Rect {
     let block = Block::bordered()
+        .border_type(BorderType::Rounded)
         .border_style(t.accent())
         .title_top(format!(" {title} "))
         .title_bottom(Line::from(footer).style(t.dim()).right_aligned());
