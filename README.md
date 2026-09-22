@@ -12,6 +12,12 @@ installs or uninstalls them through the package managers you already have.
 ## Install
 
 ```sh
+cargo install tuiman
+```
+
+Or the latest from `main`:
+
+```sh
 cargo install --git https://github.com/danctorres/tuiman tuiman
 ```
 
