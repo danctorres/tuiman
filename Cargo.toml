@@ -9,6 +9,14 @@ license = "MIT"
 repository = "https://github.com/danctorres/tuiman"
 rust-version = "1.85"
 
+# `cargo release patch --execute`: bumps, commits, tags vX.Y.Z and pushes;
+# the Release workflow publishes to crates.io.
+[workspace.metadata.release]
+shared-version = true
+publish = false
+tag-name = "v{{version}}"
+pre-release-commit-message = "chore(release): v{{version}}"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
