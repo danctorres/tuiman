@@ -12,3 +12,6 @@ categories = ["command-line-utilities"]
 
 [lints]
 workspace = true
+
+[package.metadata.release]
+tag = false

@@ -19,3 +19,6 @@ ureq = { version = "3", features = ["json"] }
 
 [lints]
 workspace = true
+
+[package.metadata.release]
+tag = false
