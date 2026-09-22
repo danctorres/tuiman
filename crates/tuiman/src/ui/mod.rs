@@ -579,6 +579,10 @@ mod tests {
         app.update(Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
     }
 
+    fn esc(app: &mut App) {
+        app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    }
+
     #[test]
     fn wide_layout_shows_every_pane() {
         let mut app = app();
@@ -635,10 +639,16 @@ mod tests {
     #[test]
     fn tiny_terminals_do_not_panic() {
         let mut app = app();
-        for (w, h) in [(0, 0), (1, 1), (5, 2), (10, 3), (20, 5), (89, 17), (90, 18)] {
+        for (w, h) in [(0, 0), (1, 1), (5, 2), (10, 3), (20, 5), (60, 3), (64, 4), (89, 17), (90, 18)] {
             render(&mut app, w, h);
             press(&mut app, '?');
             render(&mut app, w, h);
+            // A search matching nothing, which draws its own "no matches" line.
+            press(&mut app, '/');
+            press(&mut app, 'z');
+            press(&mut app, 'z');
+            render(&mut app, w, h);
+            esc(&mut app);
             press(&mut app, 'q');
             press(&mut app, '*');
             render(&mut app, w, h);
@@ -646,8 +656,15 @@ mod tests {
             press(&mut app, 't');
             press(&mut app, '/');
             render(&mut app, w, h);
+            press(&mut app, 'z');
+            press(&mut app, 'z');
+            render(&mut app, w, h);
             app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
             app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+            // The job log, empty, which draws its own placeholder line.
+            press(&mut app, 'v');
+            render(&mut app, w, h);
+            esc(&mut app);
         }
     }
 
