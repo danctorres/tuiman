@@ -24,13 +24,19 @@ pub fn resolve(http: &Http, items: &[Item]) -> Vec<Found> {
     // crawlers to stay at one request per second.
     let verified = thread::scope(|s| {
         let crates = s.spawn(|| {
-            verify(all(), Ecosystem::Crates, Duration::from_secs(1), cargo_name, |name| {
-                let doc = http.get_json(&format!("https://crates.io/api/v1/crates/{name}"))?;
-                Ok(doc.map(|d| vec![d["crate"]["repository"].clone(), d["crate"]["homepage"].clone()]))
-            })
+            verify(
+                all(),
+                Ecosystem::Crates,
+                Duration::from_secs(1),
+                |i| cargo_name(i).into_iter().collect(),
+                |name| {
+                    let doc = http.get_json(&format!("https://crates.io/api/v1/crates/{name}"))?;
+                    Ok(doc.map(|d| vec![d["crate"]["repository"].clone(), d["crate"]["homepage"].clone()]))
+                },
+            )
         });
         let npm = s.spawn(|| {
-            verify(all(), Ecosystem::Npm, Duration::from_millis(100), npm_name, |name| {
+            verify(all(), Ecosystem::Npm, Duration::from_millis(100), npm_names, |name| {
                 // `/latest` is one version's manifest, not every release ever.
                 let doc = http
                     .get_json(&format!("https://registry.npmjs.org/{}/latest", name.replace('/', "%2F")))?;
@@ -40,16 +46,25 @@ pub fn resolve(http: &Http, items: &[Item]) -> Vec<Found> {
             })
         });
         let pypi = s.spawn(|| {
-            verify(all(), Ecosystem::Pypi, Duration::from_millis(100), pypi_name, |name| {
-                let doc = http.get_json(&format!("https://pypi.org/pypi/{name}/json"))?;
-                Ok(doc.map(|d| {
-                    let mut urls = vec![d["info"]["home_page"].clone()];
-                    urls.extend(
-                        d["info"]["project_urls"].as_object().into_iter().flat_map(|o| o.values().cloned()),
-                    );
-                    urls
-                }))
-            })
+            verify(
+                all(),
+                Ecosystem::Pypi,
+                Duration::from_millis(100),
+                |i| pypi_name(i).into_iter().collect(),
+                |name| {
+                    let doc = http.get_json(&format!("https://pypi.org/pypi/{name}/json"))?;
+                    Ok(doc.map(|d| {
+                        let mut urls = vec![d["info"]["home_page"].clone()];
+                        urls.extend(
+                            d["info"]["project_urls"]
+                                .as_object()
+                                .into_iter()
+                                .flat_map(|o| o.values().cloned()),
+                        );
+                        urls
+                    }))
+                },
+            )
         });
         [crates, npm, pypi].map(|h| h.join().expect("resolver thread panicked"))
     });
@@ -63,18 +78,26 @@ fn verify<'a>(
     items: impl Iterator<Item = (usize, &'a Item)>,
     eco: Ecosystem,
     pause: Duration,
-    candidate: fn(&Item) -> Option<String>,
+    candidates: fn(&Item) -> Vec<String>,
     registry_urls: impl Fn(&str) -> crate::Result<Option<Vec<Value>>>,
 ) -> Vec<Found> {
     let mut found = Vec::new();
     for (i, item) in items {
-        let Some(name) = candidate(item).filter(|n| tuiman_index::valid_package_name(n)) else { continue };
-        match registry_urls(&name) {
-            Ok(Some(urls)) if links_back(item, &urls) => found.push((i, eco, name)),
-            Ok(_) => {}
-            Err(e) => eprintln!("warn: {}: {name}: {e}", eco.name()),
+        for name in candidates(item).into_iter().filter(|n| tuiman_index::valid_package_name(n)) {
+            let hit = match registry_urls(&name) {
+                Ok(Some(urls)) => links_back(item, &urls),
+                Ok(None) => false,
+                Err(e) => {
+                    eprintln!("warn: {}: {name}: {e}", eco.name());
+                    false
+                }
+            };
+            thread::sleep(pause);
+            if hit {
+                found.push((i, eco, name));
+                break;
+            }
         }
-        thread::sleep(pause);
     }
     found
 }
@@ -96,10 +119,17 @@ fn cargo_name(item: &Item) -> Option<String> {
     package.get("name")?.as_str().map(str::to_owned)
 }
 
-fn npm_name(item: &Item) -> Option<String> {
-    let manifest: Value = serde_json::from_str(item.manifests.package_json.as_deref()?).ok()?;
-    let public = manifest["private"].as_bool() != Some(true);
-    manifest["name"].as_str().filter(|_| public).map(str::to_owned)
+/// A private root manifest is usually a monorepo whose CLI is published from
+/// a subdirectory (openai/codex ships `@openai/codex`), so guess the usual
+/// names; the link-back check still decides.
+fn npm_names(item: &Item) -> Vec<String> {
+    let Some(manifest) = item.manifests.package_json.as_deref() else { return Vec::new() };
+    let manifest: Value = serde_json::from_str(manifest).unwrap_or_default();
+    if manifest["private"].as_bool() != Some(true) {
+        return manifest["name"].as_str().map(str::to_owned).into_iter().collect();
+    }
+    let Some((owner, name)) = item.repo.as_deref().and_then(|r| r.split_once('/')) else { return Vec::new() };
+    vec![format!("@{owner}/{name}"), name.to_owned()]
 }
 
 /// The `bin` that `npm install -g` honours is the published one, which build
@@ -160,11 +190,15 @@ mod tests {
     #[test]
     fn npm_candidates_are_public() {
         let pkg = |json: &str| {
-            npm_name(&item("a/b", Manifests { package_json: Some(json.into()), ..Manifests::default() }))
+            npm_names(&item(
+                "openai/codex",
+                Manifests { package_json: Some(json.into()), ..Manifests::default() },
+            ))
         };
-        assert_eq!(pkg(r#"{"name":"@s/cli","bin":{"cli":"x.js"}}"#), Some("@s/cli".into()));
-        assert_eq!(pkg(r#"{"name":"carbonyl"}"#), Some("carbonyl".into()));
-        assert_eq!(pkg(r#"{"name":"app","bin":"x.js","private":true}"#), None);
+        assert_eq!(pkg(r#"{"name":"@s/cli","bin":{"cli":"x.js"}}"#), ["@s/cli"]);
+        assert_eq!(pkg(r#"{"name":"carbonyl"}"#), ["carbonyl"]);
+        assert_eq!(pkg(r#"{"name":"codex-monorepo","private":true}"#), ["@openai/codex", "codex"]);
+        assert!(npm_names(&item("a/b", Manifests::default())).is_empty());
     }
 
     #[test]
@@ -228,9 +262,13 @@ mod tests {
         );
         let items = [it];
         let run = |urls: Option<Vec<Value>>| {
-            verify(items.iter().enumerate(), Ecosystem::Crates, Duration::ZERO, cargo_name, |_| {
-                Ok(urls.clone())
-            })
+            verify(
+                items.iter().enumerate(),
+                Ecosystem::Crates,
+                Duration::ZERO,
+                |i| cargo_name(i).into_iter().collect(),
+                |_| Ok(urls.clone()),
+            )
         };
         assert_eq!(
             run(Some(vec![json!("https://github.com/ClementTsang/bottom")])),
