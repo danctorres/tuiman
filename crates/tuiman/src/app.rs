@@ -70,6 +70,11 @@ pub struct Job {
 pub enum Mode {
     Normal,
     Search,
+    /// `/` in the sidebar: jumps to the first category containing `text`; esc restores `original`.
+    CategorySearch {
+        text: String,
+        original: Option<u8>,
+    },
     Picker(Picker),
     Help(Help),
     Log,
@@ -90,7 +95,7 @@ pub const HELP: [(&str, &str); 20] = [
     ("g G", "first / last"),
     ("ctrl-d ctrl-u", "half page down / up"),
     ("tab shift-tab", "next / previous category"),
-    ("/", "fuzzy search (enter keeps, esc clears)"),
+    ("/", "fuzzy search, or find a category in the sidebar"),
     ("s", "cycle sort: stars, name, last push"),
     ("*", "minimum stars"),
     ("L", "language"),
@@ -169,6 +174,8 @@ pub struct App {
     pub theme: usize,
     /// ←/→ move focus; ↑/↓ then move through categories instead of rows.
     pub sidebar_focused: bool,
+    /// The layout has room for the sidebar; reported by the shell.
+    pub sidebar_visible: bool,
     quit_armed: bool,
 }
 
@@ -196,6 +203,7 @@ impl App {
             dirty: true,
             theme: 0,
             sidebar_focused: false,
+            sidebar_visible: true,
             quit_armed: false,
         };
         app.refilter(false);
@@ -313,14 +321,6 @@ impl App {
         self.offset = self.offset.min(self.view.rows.len().saturating_sub(page));
     }
 
-    /// Called by the shell when the layout changes.
-    pub fn set_page(&mut self, page: usize) {
-        if self.page != page {
-            self.page = page;
-            self.scroll_into_view();
-        }
-    }
-
     fn move_by(&mut self, delta: isize) {
         self.selected = self.selected.saturating_add_signed(delta);
         self.scroll_into_view();
@@ -336,6 +336,10 @@ impl App {
             Mode::Normal => self.on_normal_key(key.code, ctrl, armed),
             Mode::Search => {
                 self.on_search_key(key.code, ctrl);
+                Vec::new()
+            }
+            Mode::CategorySearch { .. } => {
+                self.on_category_search_key(key.code, ctrl);
                 Vec::new()
             }
             Mode::Picker(_) => self.on_picker_key(key.code),
@@ -364,6 +368,10 @@ impl App {
                     self.sidebar_focused = false;
                     return Vec::new();
                 }
+                KeyCode::Char('/') => {
+                    self.mode = Mode::CategorySearch { text: String::new(), original: self.query.category };
+                    return Vec::new();
+                }
                 _ => 0,
             };
             if step != 0 {
@@ -387,7 +395,7 @@ impl App {
             KeyCode::PageUp => self.move_by(-(self.page as isize)),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(isize::MIN),
             KeyCode::Char('G') | KeyCode::End => self.move_by(isize::MAX),
-            KeyCode::Char('h') | KeyCode::Left => self.sidebar_focused = true,
+            KeyCode::Char('h') | KeyCode::Left => self.sidebar_focused = self.sidebar_visible,
             KeyCode::Char('l') | KeyCode::Right => self.sidebar_focused = false,
             KeyCode::Tab => self.step_category(1, true),
             KeyCode::BackTab => self.step_category(-1, true),
@@ -465,22 +473,10 @@ impl App {
                 *filter = None;
                 help.selected = 0;
             }
-            (KeyCode::Backspace, Some(filter)) => {
-                filter.pop();
-                help.selected = 0;
-            }
-            (KeyCode::Char('u'), Some(filter)) if ctrl => {
-                filter.clear();
-                help.selected = 0;
-            }
-            (KeyCode::Char('w'), Some(filter)) if ctrl => {
-                filter.truncate(filter.trim_end().rfind(' ').map_or(0, |i| i + 1));
-                help.selected = 0;
-            }
-            (KeyCode::Char(c), Some(filter)) if !ctrl && filter.len() < 32 => {
-                filter.push(c);
-                help.selected = 0;
-            }
+            (_, Some(filter)) => match edit(filter, code, ctrl, 32) {
+                true => help.selected = 0,
+                false => self.mode = Mode::Normal,
+            },
             _ => self.mode = Mode::Normal,
         }
     }
@@ -494,18 +490,54 @@ impl App {
             }
             KeyCode::Down => return self.move_by(1),
             KeyCode::Up => return self.move_by(-1),
-            KeyCode::Backspace => {
-                self.query.text.pop();
-            }
-            KeyCode::Char('u') if ctrl => self.query.text.clear(),
-            KeyCode::Char('w') if ctrl => {
-                let kept = self.query.text.trim_end().rfind(' ').map_or(0, |i| i + 1);
-                self.query.text.truncate(kept);
-            }
-            KeyCode::Char(c) if !ctrl && self.query.text.len() < 64 => self.query.text.push(c),
-            _ => return,
+            _ if !edit(&mut self.query.text, code, ctrl, 64) => return,
+            _ => {}
         }
         self.refilter(false);
+    }
+
+    fn on_category_search_key(&mut self, code: KeyCode, ctrl: bool) {
+        let Mode::CategorySearch { text, original } = &mut self.mode else { return };
+        let original = *original;
+        match code {
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                self.sidebar_focused = false;
+                return;
+            }
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.query.category = original;
+                return self.refilter(true);
+            }
+            _ => {}
+        }
+        if !edit(text, code, ctrl, 32) {
+            return;
+        }
+        let needle = text.to_lowercase();
+        let found = match needle.is_empty() {
+            true => Some(original),
+            false => (0..self.catalog.category_count() as u8)
+                .find(|&id| self.catalog.category_name(id).to_lowercase().contains(&needle))
+                .map(Some),
+        };
+        // No match keeps the last hit, so a typo does not throw the selection away.
+        if let Some(category) = found.filter(|&c| c != self.query.category) {
+            self.query.category = category;
+            self.refilter(true);
+        }
+    }
+
+    /// Called by the shell when the terminal is resized. Focus cannot stay on
+    /// a sidebar the layout dropped, or keys would change categories unseen.
+    pub fn set_layout(&mut self, page: usize, sidebar: bool) {
+        self.sidebar_visible = sidebar;
+        self.sidebar_focused &= sidebar;
+        if self.page != page {
+            self.page = page;
+            self.scroll_into_view();
+        }
     }
 
     /// Steps through "All" followed by each category, wrapping or stopping at the ends.
@@ -666,6 +698,22 @@ impl App {
     }
 }
 
+/// Line editing shared by every text field: backspace, ctrl-u, ctrl-w and
+/// typing up to `max` bytes. Returns whether the key was an editing key, so
+/// callers can tell a keystroke to swallow from a command of their own.
+fn edit(text: &mut String, code: KeyCode, ctrl: bool, max: usize) -> bool {
+    match code {
+        KeyCode::Backspace => drop(text.pop()),
+        KeyCode::Char('u') if ctrl => text.clear(),
+        KeyCode::Char('w') if ctrl => text.truncate(text.trim_end().rfind(' ').map_or(0, |i| i + 1)),
+        KeyCode::Char(c) if !ctrl && text.len() < max => text.push(c),
+        // Over the limit, or an unmapped ctrl chord: ignored, not a command.
+        KeyCode::Char(_) => {}
+        _ => return false,
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,7 +741,7 @@ mod tests {
     #[test]
     fn navigation_clamps_and_scrolls() {
         let mut app = app(&[]);
-        app.set_page(2);
+        app.set_layout(2, true);
         assert_eq!(selected_name(&app), "lazygit");
         press(&mut app, KeyCode::Char('k'));
         assert_eq!(app.selected, 0);
@@ -750,6 +798,34 @@ mod tests {
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Down);
         assert_eq!((app.query.category, app.selected), (Some(0), 1));
+
+        press(&mut app, KeyCode::Left);
+        app.set_layout(20, false);
+        assert!(!app.sidebar_focused, "a resize that drops the sidebar drops its focus");
+        press(&mut app, KeyCode::Left);
+        assert!(!app.sidebar_focused, "a hidden sidebar cannot be focused");
+    }
+
+    #[test]
+    fn slash_in_the_sidebar_finds_a_category() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "LIB");
+        let category = app.query.category.expect("jumped to a category");
+        assert_eq!(app.catalog.category_name(category), "Libraries");
+        type_text(&mut app, "zz");
+        assert_eq!(app.query.category, Some(category), "no match keeps the last hit");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!((&app.mode, app.query.category, app.sidebar_focused), (&Mode::Normal, None, true));
+
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "dev");
+        press(&mut app, KeyCode::Enter);
+        let category = app.query.category.expect("kept the category");
+        assert_eq!(app.catalog.category_name(category), "Development");
+        assert_eq!((&app.mode, app.sidebar_focused), (&Mode::Normal, false));
+        assert!(app.query.text.is_empty(), "the list search is untouched");
     }
 
     #[test]
@@ -802,6 +878,10 @@ mod tests {
         app.update(ctrl('u'));
         let Mode::Help(help) = &app.mode else { panic!("help closed") };
         assert_eq!(help.filter.as_deref(), Some(""), "ctrl-u clears");
+        type_text(&mut app, &"x".repeat(40));
+        let Mode::Help(help) = &app.mode else { panic!("typing past the limit closed help") };
+        assert_eq!(help.filter.as_deref().map(str::len), Some(32));
+        app.update(ctrl('u'));
         press(&mut app, KeyCode::Esc);
         let Mode::Help(help) = &app.mode else { panic!("esc closes help while searching") };
         assert_eq!(help.filter, None, "first esc clears the search");
