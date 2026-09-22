@@ -2,7 +2,7 @@ name: Release
 
 # On a `v*` tag: builds tuiman for Linux (static musl) and macOS, creates the
 # GitHub release and uploads the tarballs with a SHA256SUMS file and build
-# provenance attestations.
+# provenance attestations, then updates the Homebrew tap.
 
 on:
   push:
@@ -67,3 +67,34 @@ jobs:
           gh release view "$VERSION" >/dev/null 2>&1 ||
             gh release create "$VERSION" --verify-tag --generate-notes
           gh release upload "$VERSION" dist/* --clobber
+
+  # Fills pkg/tuiman.rb from SHA256SUMS and pushes it to the tap. Needs the
+  # HOMEBREW_TAP_TOKEN secret (contents: write on danctorres/homebrew-tap).
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$VERSION" -p SHA256SUMS
+          mkdir out
+          pkg/render.sh "$VERSION" SHA256SUMS pkg/tuiman.rb > out/tuiman.rb
+      - uses: actions/checkout@v4
+        with:
+          repository: danctorres/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Push Homebrew formula
+        run: |
+          mkdir -p tap/Formula
+          cp out/tuiman.rb tap/Formula/
+          cd tap
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Formula/tuiman.rb
+          git diff --cached --quiet && exit  # re-run of the same release
+          git commit -m "feat: update tuiman to ${VERSION#v}"
+          git push
