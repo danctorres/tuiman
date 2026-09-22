@@ -48,8 +48,7 @@ fn target(repo: &str) -> Option<(Ecosystem, u32)> {
 pub fn resolve(http: &Http, items: &[Item]) -> Vec<Found> {
     let mut found = Vec::new();
     let mut failures = 0;
-    // Distro packages of a library are the library itself, not a binary (see bulk).
-    for (i, item) in items.iter().enumerate().filter(|(_, item)| !item.library) {
+    for (i, item) in items.iter().enumerate() {
         // Repology project names are usually the most common package name.
         let Some(project) = ANCHORS.iter().find_map(|(_, eco)| item.packages.get(eco.name())) else {
             continue;

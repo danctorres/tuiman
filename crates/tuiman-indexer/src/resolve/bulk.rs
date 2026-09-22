@@ -36,15 +36,17 @@ pub(super) fn assign(
     eco: Ecosystem,
     by_repo: &HashMap<String, (Rank, String)>,
 ) -> Vec<Found> {
-    // Bulk dumps match on URL alone, so a library would pick up its library
-    // package (`python-rich`); only the registries can prove a binary.
-    let apps = items.iter().enumerate().filter(|(_, item)| !item.library);
-    apps.filter_map(|(i, item)| {
-        let keys = [&item.repo, &item.former_repo];
-        let (_, name) = keys.into_iter().flatten().find_map(|key| by_repo.get(key))?;
-        Some((i, eco, name.clone()))
-    })
-    .collect()
+    // A library's distro package is the library itself (brew's libuv), which
+    // is what installing a library entry means.
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            let keys = [&item.repo, &item.former_repo];
+            let (_, name) = keys.into_iter().flatten().find_map(|key| by_repo.get(key))?;
+            Some((i, eco, name.clone()))
+        })
+        .collect()
 }
 
 pub(super) fn offer(by_repo: &mut HashMap<String, (Rank, String)>, repo: String, rank: Rank, name: &str) {
@@ -165,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn assignment_follows_renames_and_skips_libraries() {
+    fn assignment_follows_renames_and_includes_libraries() {
         let by_repo = HashMap::from([
             ("old/app".to_owned(), ((0, 3), "app".to_owned())),
             ("o/lib".to_owned(), ((0, 3), "lib".to_owned())),
@@ -175,7 +177,10 @@ mod tests {
             Item { repo: Some("o/lib".into()), library: true, ..Item::default() },
             Item { repo: None, ..Item::default() },
         ];
-        assert_eq!(assign(&items, Ecosystem::Aur, &by_repo), [(0, Ecosystem::Aur, "app".to_owned())]);
+        assert_eq!(
+            assign(&items, Ecosystem::Aur, &by_repo),
+            [(0, Ecosystem::Aur, "app".to_owned()), (1, Ecosystem::Aur, "lib".to_owned())]
+        );
     }
 
     #[test]
