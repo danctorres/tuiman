@@ -239,6 +239,7 @@ fn change(action: Action, args: &[String]) -> CliResult {
     let job = Job {
         action,
         manager: choice.manager,
+        row,
         title: String::new(),
         argv: manager.argv(action, &choice.package),
     };

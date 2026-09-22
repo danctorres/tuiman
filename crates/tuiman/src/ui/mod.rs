@@ -197,7 +197,12 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         let faded = cat.is_archived(row);
         let text = if faded { t.dim() } else { Style::new() };
 
-        if app.installed.is_installed(row) {
+        // A job on this row outranks the installed mark: spinning while it runs, ⋯ while queued.
+        if app.running.as_ref().is_some_and(|job| job.row == row) {
+            put(buf, y, (0, 1), SPINNER[app.spinner % SPINNER.len()], t.accent().patch(BOLD));
+        } else if app.queue.iter().any(|job| job.row == row) {
+            put(buf, y, (0, 1), "⋯", t.accent());
+        } else if app.installed.is_installed(row) {
             put(buf, y, (0, 1), "✓", Style::new().fg(t.installed));
         }
         put(buf, y, cols.name, cat.name(row), text.patch(BOLD));
@@ -306,7 +311,11 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
             area.y,
             &app.status,
             area.width.saturating_sub(1) as usize,
-            Style::new(),
+            match app.status.chars().next() {
+                Some('✓') => Style::new().fg(t.installed).patch(BOLD),
+                Some('✗') => Style::new().fg(t.archived).patch(BOLD),
+                _ => Style::new(),
+            },
         ),
     };
 
@@ -320,7 +329,9 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     };
     let text = format!(" {} {activity} ", SPINNER[app.spinner % SPINNER.len()]);
     let width = (text.chars().count() as u16).min(area.width);
-    buf.set_stringn(area.right() - width, area.y, &text, width as usize, t.accent());
+    // A running job gets a solid badge; background scans stay a quiet spinner.
+    let style = if app.running.is_some() { t.selected().patch(BOLD) } else { t.accent() };
+    buf.set_stringn(area.right() - width, area.y, &text, width as usize, style);
 }
 
 #[cfg(test)]
@@ -405,6 +416,15 @@ mod tests {
         app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
         let all = render(&mut app, 100, 24).join("\n");
         assert!(all.contains("Install bottom?") && all.contains("cargo install --locked bottom"), "{all}");
+
+        app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        let screen = render(&mut app, 100, 24);
+        let row = screen.iter().find(|l| l.contains("bottom description")).unwrap();
+        assert!(row.contains(SPINNER[0]), "running row spins: {row}");
+        assert!(screen[23].contains("install bottom (cargo)"), "{}", screen[23]);
+        app.update(Event::JobDone { ok: false });
+        let screen = render(&mut app, 100, 24);
+        assert!(screen[23].contains("✗ install bottom (cargo) failed"), "{}", screen[23]);
     }
 
     #[test]

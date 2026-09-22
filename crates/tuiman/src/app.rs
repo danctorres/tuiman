@@ -60,6 +60,8 @@ pub enum Effect {
 pub struct Job {
     pub action: Action,
     pub manager: ManagerId,
+    /// The TUI being installed or removed, marked in the list while the job is pending.
+    pub row: Row,
     pub title: String,
     pub argv: Vec<String>,
 }
@@ -636,6 +638,7 @@ impl App {
                 let job = Job {
                     action,
                     manager: choice.manager,
+                    row,
                     title: format!("{} {} ({})", action.verb(), self.catalog.name(row), manager.name),
                     argv: manager.argv(action, &choice.package),
                 };
@@ -646,7 +649,7 @@ impl App {
                     self.status = format!("Queued: {}", job.title);
                     self.queue.push_back(job);
                 } else {
-                    self.status = format!("Running: {} (press v for output)", job.title);
+                    self.status = "Press v to watch the output".into();
                     return vec![self.start(job)];
                 }
             }
