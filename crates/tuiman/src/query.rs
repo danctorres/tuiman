@@ -2,6 +2,8 @@
 //! just a vector of row ids. Buffers are reused, so re-running a query does
 //! not allocate once they have grown to catalog size.
 
+use std::cmp::Reverse;
+
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use tuiman_index::{Catalog, Row};
@@ -112,22 +114,22 @@ impl View {
             }
         }
 
-        let stars = |row: Row| std::cmp::Reverse(catalog.stars(row).unwrap_or(0));
+        // While searching, name hits stay above description hits; within a
+        // tier the chosen sort applies and the fuzzy score only breaks ties.
         let scores = &self.scores;
-        match (pattern.is_some(), query.sort) {
-            (true, _) => {
-                self.rows.sort_unstable_by_key(|&r| (std::cmp::Reverse(scores[r as usize]), stars(r), r))
-            }
-            (false, Sort::Stars) => self.rows.sort_unstable_by_key(|&r| (stars(r), r)),
-            (false, Sort::Updated) => {
-                self.rows
-                    .sort_unstable_by_key(|&r| (std::cmp::Reverse(catalog.pushed_days(r).unwrap_or(0)), r));
-            }
-            (false, Sort::Name) => self.rows.sort_unstable_by(|&a, &b| {
-                let (a, b) = (catalog.name(a), catalog.name(b));
-                a.bytes().map(|c| c.to_ascii_lowercase()).cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
-            }),
-        }
+        let tier = |r: Row| Reverse(scores[r as usize] >> 20);
+        let relevance = |r: Row| Reverse(scores[r as usize]);
+        let stars = |r: Row| Reverse(catalog.stars(r).unwrap_or(0));
+        let pushed = |r: Row| Reverse(catalog.pushed_days(r).unwrap_or(0));
+        let name = |r: Row| catalog.name(r).bytes().map(|c| c.to_ascii_lowercase());
+        self.rows.sort_unstable_by(|&a, &b| {
+            let chosen = match query.sort {
+                Sort::Stars => stars(a).cmp(&stars(b)),
+                Sort::Name => name(a).cmp(name(b)),
+                Sort::Updated => pushed(a).cmp(&pushed(b)),
+            };
+            tier(a).cmp(&tier(b)).then(chosen).then(relevance(a).cmp(&relevance(b))).then(a.cmp(&b))
+        });
     }
 }
 
@@ -194,6 +196,16 @@ mod tests {
         assert_eq!(names(&c, &by_desc, &inst), ["lazygit"]);
         let fuzzy = Query { text: "BTM".into(), ..Query::default() };
         assert_eq!(names(&c, &fuzzy, &inst), ["bottom"]);
+    }
+
+    #[test]
+    fn sort_still_applies_while_searching() {
+        let c = catalog();
+        let inst = Installed::new(Vec::new(), &c);
+        let by_stars = Query { text: "b".into(), ..Query::default() };
+        assert_eq!(names(&c, &by_stars, &inst), ["btop", "bottom"]);
+        let by_name = Query { text: "b".into(), sort: Sort::Name, ..Query::default() };
+        assert_eq!(names(&c, &by_name, &inst), ["bottom", "btop"]);
     }
 
     #[test]
