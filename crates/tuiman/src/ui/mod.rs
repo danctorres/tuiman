@@ -173,9 +173,10 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
     }
 
     let cols = Columns::new(inner.width);
-    let header = |label: &str, sort: Option<Sort>| match sort == Some(app.query.sort) {
-        true => format!("{label}▾"),
-        false => label.to_owned(),
+    // The sorted column's header is the one bright thing in the header row.
+    let header = |label: &str, sort: Sort| match sort == app.query.sort {
+        true => (format!("{label} ▾"), t.accent().patch(BOLD)),
+        false => (label.to_owned(), t.dim()),
     };
     let put = |buf: &mut Buffer, y, (x, w): (u16, u16), text: &str, style| {
         buf.set_stringn(inner.x + x, y, text, w as usize, style);
@@ -185,11 +186,14 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(inner.x + x + pad, y, text, (w - pad) as usize, style);
     };
 
-    put(buf, inner.y, cols.name, &header("NAME", Some(Sort::Name)), t.dim());
-    put_right(buf, inner.y, cols.stars, &header("★", Some(Sort::Stars)), t.dim());
+    let (name, style) = header("NAME", Sort::Name);
+    put(buf, inner.y, cols.name, &name, style);
+    let (stars, style) = header("★", Sort::Stars);
+    put_right(buf, inner.y, cols.stars, &stars, style);
     if let (Some(language), Some(age)) = (cols.language, cols.age) {
         put(buf, inner.y, language, "LANGUAGE", t.dim());
-        put_right(buf, inner.y, age, &header("PUSH", Some(Sort::Updated)), t.dim());
+        let (push, style) = header("PUSH", Sort::Updated);
+        put_right(buf, inner.y, age, &push, style);
     }
     put(buf, inner.y, cols.desc, "DESCRIPTION", t.dim());
 
@@ -408,12 +412,16 @@ mod tests {
         let screen = render(&mut app, 120, 30);
         let all = screen.join("\n");
         assert!(screen[0].contains("Categories") && screen[0].contains("5/6 · sort:stars"), "{}", screen[0]);
-        assert!(screen[1].contains("NAME") && screen[1].contains("★▾") && screen[1].contains("LANGUAGE"));
+        assert!(screen[1].contains("NAME") && screen[1].contains("★ ▾") && screen[1].contains("LANGUAGE"));
         assert!(screen[2].contains("lazygit") && screen[2].contains("50k") && screen[2].contains("Go"));
         assert!(screen[3].contains("✓") && screen[3].contains("btop"), "installed mark: {}", screen[3]);
         assert!(all.contains("https://github.com/o/lazygit") && all.contains("brew:lazygit"));
         assert!(all.contains("Dashboards") && all.contains("/ search"));
         assert!(!all.contains("oldtool"), "archived rows are hidden by default");
+
+        press(&mut app, 's');
+        let screen = render(&mut app, 120, 30);
+        assert!(screen[1].contains("PUSH ▾") && !screen[1].contains("★ ▾"), "{}", screen[1]);
     }
 
     #[test]

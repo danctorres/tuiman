@@ -19,11 +19,12 @@ pub enum Sort {
 }
 
 impl Sort {
+    /// Walks the table columns left to right (NAME, ★, PUSH), wrapping around.
     pub fn next(self) -> Sort {
         match self {
-            Sort::Stars => Sort::Name,
-            Sort::Name => Sort::Updated,
-            Sort::Updated => Sort::Stars,
+            Sort::Name => Sort::Stars,
+            Sort::Stars => Sort::Updated,
+            Sort::Updated => Sort::Name,
         }
     }
 
