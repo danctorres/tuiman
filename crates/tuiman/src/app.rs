@@ -109,7 +109,7 @@ pub const HELP: [(&str, &str); 23] = [
     ("A", "show archived projects"),
     ("enter", "install, or uninstall if installed"),
     ("o", "open the project page"),
-    ("y", "copy the name"),
+    ("y", "copy the selected item"),
     ("r", "refresh the index"),
     ("v", "view job output"),
     ("t", "colour theme"),
@@ -404,9 +404,9 @@ impl App {
                 Vec::new()
             }
             Mode::Picker(_) => self.on_picker_key(key.code, ctrl, count),
-            Mode::Help(_) => {
-                self.on_help_key(key.code, ctrl, count);
-                Vec::new()
+            Mode::Help(_) => self.on_help_key(key.code, ctrl, count),
+            Mode::Log if key.code == KeyCode::Char('y') => {
+                vec![Effect::Copy(self.log.iter().map(String::as_str).collect::<Vec<_>>().join("\n"))]
             }
             Mode::Log => {
                 self.mode = Mode::Normal;
@@ -456,6 +456,10 @@ impl App {
                 KeyCode::Char('/') => {
                     self.mode = Mode::CategorySearch { text: String::new(), original: self.query.category };
                     return Vec::new();
+                }
+                KeyCode::Char('y') => {
+                    let name = self.query.category.map_or("All", |id| self.catalog.category_name(id));
+                    return vec![Effect::Copy(name.to_owned())];
                 }
                 _ => 0,
             };
@@ -546,15 +550,20 @@ impl App {
     }
 
     /// Arrows always move; typing edits the filter once `/` opened it.
-    fn on_help_key(&mut self, code: KeyCode, ctrl: bool, count: usize) {
+    fn on_help_key(&mut self, code: KeyCode, ctrl: bool, count: usize) -> Vec<Effect> {
         let page = self.page;
-        let Mode::Help(help) = &mut self.mode else { return };
+        let Mode::Help(help) = &mut self.mode else { return Vec::new() };
         let len = help.rows().count();
         if let Some(to) = list_motion(code, help.filter.is_some(), help.selected, len, page, count) {
             help.selected = to;
-            return;
+            return Vec::new();
         }
         match (code, &mut help.filter) {
+            (KeyCode::Char('y'), None) => {
+                if let Some((keys, what)) = help.rows().nth(help.selected) {
+                    return vec![Effect::Copy(format!("{keys}  {what}"))];
+                }
+            }
             (KeyCode::Left | KeyCode::Right, Some(_)) => {}
             (KeyCode::Char('/'), filter @ None) => *filter = Some(String::new()),
             (KeyCode::Esc, filter @ Some(_)) => {
@@ -567,6 +576,7 @@ impl App {
             },
             _ => self.mode = Mode::Normal,
         }
+        Vec::new()
     }
 
     fn on_search_key(&mut self, code: KeyCode, ctrl: bool) {
@@ -736,6 +746,17 @@ impl App {
         match list_motion(code, false, picker.selected, picker.items.len(), page, count) {
             Some(to) => picker.selected = to,
             None => match code {
+                // Only a confirmation reads y as yes; the other pickers copy what is selected.
+                KeyCode::Char('y') if !matches!(picker.kind, PickerKind::Confirm { .. }) => {
+                    let text = match &picker.kind {
+                        PickerKind::Language(ids) if ids[picker.selected].is_some() => {
+                            ids[picker.selected].map(|id| self.catalog.language_name(id))
+                        }
+                        // A theme search can match nothing.
+                        _ => picker.items.get(picker.selected).map(String::as_str),
+                    };
+                    return text.map(|t| vec![Effect::Copy(t.to_owned())]).unwrap_or_default();
+                }
                 KeyCode::Enter | KeyCode::Char('y') => {
                     let Mode::Picker(picker) = std::mem::replace(&mut self.mode, Mode::Normal) else {
                         unreachable!()
@@ -1170,6 +1191,38 @@ mod tests {
 
         let help = Help { filter: Some("L".into()), ..Help::default() };
         assert_eq!(help.rows().map(|(keys, _)| *keys).collect::<Vec<_>>(), ["L"], "keys match by case");
+    }
+
+    #[test]
+    fn y_copies_in_every_panel() {
+        let copied = |effects: Vec<Effect>| match effects.as_slice() {
+            [Effect::Copy(text)] => text.clone(),
+            other => panic!("expected a copy, got {other:?}"),
+        };
+        let mut app = app(&[]);
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), "lazygit");
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), "All");
+        press(&mut app, KeyCode::Char('j'));
+        let category = app.catalog.category_name(app.query.category.unwrap()).to_owned();
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), category);
+
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('t'));
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), app.theme().name);
+        assert!(matches!(app.mode, Mode::Picker(_)), "copying keeps the picker open");
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "zzz");
+        assert!(press(&mut app, KeyCode::Enter).is_empty(), "no theme to pick");
+
+        press(&mut app, KeyCode::Char('?'));
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), format!("{}  {}", HELP[0].0, HELP[0].1));
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('v'));
+        app.log.extend(["one".to_owned(), "two".to_owned()]);
+        assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), "one\ntwo");
+        assert_eq!(app.mode, Mode::Log);
     }
 
     #[test]

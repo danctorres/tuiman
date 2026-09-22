@@ -64,7 +64,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `i` `a` `A` | installed only, installable here only, show archived |
 | `enter` | install, or uninstall if installed (always shows the exact command first) |
 | `o` | open the project page |
-| `y` | copy the name |
+| `y` | copy the selected item: name, category, theme, help line or job output |
 | `v` | view job output |
 | `t` | pick a colour theme, `/` searches (default, gruvbox, nord, catppuccin, tokyonight, dracula, solarized-light, rose-pine, kanagawa, everforest, monokai, synthwave, paper, bubblegum, gameboy, phosphor, amber, high-contrast) |
 | `?` | key help (`/` searches it) |
