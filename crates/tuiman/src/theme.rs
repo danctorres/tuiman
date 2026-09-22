@@ -40,6 +40,30 @@ impl Theme {
         }
     }
 
+    /// The star count's colour, warming from `dim` to `stars` on a log scale
+    /// so popularity reads at a glance: ~100 stars is cold, 30k is full heat.
+    /// A palette that cannot blend keeps every count at full heat, rather
+    /// than snapping half the table to the dim colour at some arbitrary count.
+    pub fn heat(&self, stars: Option<u32>) -> Style {
+        let level = match stars {
+            Some(n) if n > 0 => (((n as f32).log10() - 2.0) / 2.5).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        match (self.dim, self.stars) {
+            (Color::Rgb(..), Color::Rgb(..)) => Style::new().fg(mix(self.dim, self.stars, level)),
+            _ => Style::new().fg(self.stars),
+        }
+    }
+
+    /// The background of every other table row: the base background nudged
+    /// towards the foreground. Named palettes cannot blend, so they get none.
+    pub fn stripe(&self) -> Style {
+        match mix(self.bg, self.fg, 0.06) {
+            Color::Rgb(r, g, b) => Style::new().bg(Color::Rgb(r, g, b)),
+            _ => Style::new(),
+        }
+    }
+
     pub fn selected(&self) -> Style {
         let fg = if self.bg == Color::Reset { Color::Black } else { self.bg };
         Style::new().fg(fg).bg(self.accent)
@@ -389,6 +413,22 @@ pub fn by_name(name: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heat_warms_with_stars_and_stripes_need_rgb() {
+        let t = &THEMES[by_name("nord")];
+        let cold = t.heat(None).fg.unwrap();
+        assert_eq!(cold, t.dim, "unknown and tiny counts stay dim");
+        assert_eq!(t.heat(Some(100)).fg.unwrap(), t.dim);
+        assert_eq!(t.heat(Some(50_000)).fg.unwrap(), t.stars, "a popular project is full heat");
+        let mid = t.heat(Some(2_000)).fg.unwrap();
+        assert!(mid != t.dim && mid != t.stars, "in between it blends: {mid:?}");
+
+        assert!(t.stripe().bg.is_some(), "a 24-bit theme stripes its rows");
+        let terminal = &THEMES[0];
+        assert_eq!(terminal.heat(Some(50)).fg, Some(terminal.stars), "no blend, no fade");
+        assert_eq!(terminal.stripe().bg, None, "the terminal palette cannot blend, so no stripe");
+    }
 
     #[test]
     fn mix_blends_rgb_and_switches_named_colours() {

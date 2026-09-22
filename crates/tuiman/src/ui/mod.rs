@@ -25,6 +25,17 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 
+/// Nerd Font glyphs: the left cap of a solid badge and a thin group separator.
+const POWER_CAP: &str = "\u{e0b2}";
+const POWER_SEP: &str = " \u{e0b1} ";
+
+/// Whether to draw Nerd Font glyphs in the status bar. Opt-in, since a
+/// terminal without a patched font shows them as boxes.
+fn powerline() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TUIMAN_POWERLINE").is_some_and(|v| v != "0"))
+}
+
 pub struct Areas {
     pub sidebar: Rect,
     pub table: Rect,
@@ -234,6 +245,11 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         let selected = i == app.selected;
         let faded = cat.is_archived(row);
         let text = if faded { t.dim() } else { Style::new() };
+        // Alternating rows sit on a shade of the background, so a wide table
+        // still reads across. Themes on the terminal palette get no stripe.
+        if i % 2 == 1 {
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), t.stripe());
+        }
 
         // A job on this row outranks the installed mark: spinning while it runs, ⋯ while queued.
         if app.running.as_ref().is_some_and(|job| job.row == row) {
@@ -253,7 +269,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             y,
             cols.stars,
             &format::stars(cat.stars(row)),
-            if faded { t.dim() } else { Style::new().fg(t.stars) },
+            if faded { t.dim() } else { t.heat(cat.stars(row)) },
         );
         if let (Some(language), Some(age)) = (cols.language, cols.age) {
             put(buf, y, language, cat.language(row), t.dim());
@@ -395,11 +411,17 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     let mut right = area.right();
     if let Some(activity) = activity {
         let text = format!(" {} {activity} ", SPINNER[app.spinner % SPINNER.len()]);
-        let width = (text.chars().count() as u16).min(area.width);
         // A running job gets a solid badge; background scans stay a quiet spinner.
-        let style = if app.running.is_some() { t.selected().patch(BOLD) } else { t.accent() };
+        let solid = app.running.is_some();
+        let style = if solid { t.selected().patch(BOLD) } else { t.accent() };
+        let cap = powerline() && solid;
+        let width = (text.chars().count() as u16 + u16::from(cap)).min(area.width);
         right -= width;
-        buf.set_stringn(right, area.y, &text, width as usize, style);
+        let x = match cap {
+            true => buf.set_stringn(right, area.y, POWER_CAP, 1, Style::new().fg(t.accent)).0,
+            false => right,
+        };
+        buf.set_stringn(x, area.y, &text, (right + width - x) as usize, style);
     }
     // The pending count, as vim's showcmd does, so a stray digit isn't a surprise.
     let (text, style) = match app.count {
@@ -444,7 +466,8 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         &[("r", "refresh"), ("t", "theme"), ("q", "quit")],
     ];
     const HELP: (&str, &str) = ("?", "help");
-    const GROUP: &str = " │ ";
+    // Same width either way, so the fitting maths below does not care which.
+    let divider: &str = if powerline() { POWER_SEP } else { " │ " };
     const GAP: &str = "  ";
     let end = right.saturating_sub(1);
     let draw = |buf: &mut Buffer, x: u16, sep: &str, (key, label): (&str, &str)| {
@@ -459,13 +482,13 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     };
     let width =
         |sep: &str, (key, label): (&str, &str)| (sep.chars().count() + key.len() + 1 + label.len()) as u16;
-    let help_end = end.saturating_sub(width(GROUP, HELP));
+    let help_end = end.saturating_sub(width(divider, HELP));
     let mut x = area.x + 1;
     'groups: for (g, group) in HINTS.iter().enumerate() {
         for (i, &hint) in group.iter().enumerate() {
             let sep = match (g, i) {
                 (0, 0) => "",
-                (_, 0) => GROUP,
+                (_, 0) => divider,
                 _ => GAP,
             };
             if x + width(sep, hint) > help_end {
@@ -474,7 +497,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
             x = draw(buf, x, sep, hint);
         }
     }
-    draw(buf, x, if x == area.x + 1 { "" } else { GROUP }, HELP);
+    draw(buf, x, if x == area.x + 1 { "" } else { divider }, HELP);
 }
 
 /// How lit the hint is with `left` ticks to go: eases up to full over the
