@@ -70,7 +70,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     status(buf, areas.status, app);
 
     match &app.mode {
-        Mode::Picker(picker) => overlay::picker(buf, area, picker, app.theme()),
+        Mode::Picker(picker) => {
+            if let Some(pos) = overlay::picker(buf, area, picker, app.theme()) {
+                frame.set_cursor_position(pos);
+            }
+        }
         Mode::Help(help) => {
             if let Some(pos) = overlay::help(buf, area, app.theme(), help) {
                 frame.set_cursor_position(pos);
@@ -344,7 +348,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
     const HINTS: &str =
-        " / search · s sort · * stars · L language · i installed · a installable · enter install/uninstall · o open · t theme · ? help";
+        " / search · s sort · * stars · L language · i installed · a installable · c clear · enter install/uninstall · o open · t theme · ? help · q quit";
     match app.status.is_empty() {
         true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, t.dim()),
         false => buf.set_stringn(
@@ -362,17 +366,27 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
 
     let scanning = if app.detecting { 1 } else { app.scans_pending };
     let activity = match (&app.running, app.refreshing, scanning) {
-        (Some(job), _, _) if app.queue.is_empty() => job.title.clone(),
-        (Some(job), _, _) => format!("{} (+{} queued)", job.title, app.queue.len()),
-        (None, true, _) => "refreshing index".to_owned(),
-        (None, false, 1..) => "scanning installed".to_owned(),
-        (None, false, 0) => return,
+        (Some(job), _, _) if app.queue.is_empty() => Some(job.title.clone()),
+        (Some(job), _, _) => Some(format!("{} (+{} queued)", job.title, app.queue.len())),
+        (None, true, _) => Some("refreshing index".to_owned()),
+        (None, false, 1..) => Some("scanning installed".to_owned()),
+        (None, false, 0) => None,
     };
-    let text = format!(" {} {activity} ", SPINNER[app.spinner % SPINNER.len()]);
-    let width = (text.chars().count() as u16).min(area.width);
-    // A running job gets a solid badge; background scans stay a quiet spinner.
-    let style = if app.running.is_some() { t.selected().patch(BOLD) } else { t.accent() };
-    buf.set_stringn(area.right() - width, area.y, &text, width as usize, style);
+    let mut right = area.right();
+    if let Some(activity) = activity {
+        let text = format!(" {} {activity} ", SPINNER[app.spinner % SPINNER.len()]);
+        let width = (text.chars().count() as u16).min(area.width);
+        // A running job gets a solid badge; background scans stay a quiet spinner.
+        let style = if app.running.is_some() { t.selected().patch(BOLD) } else { t.accent() };
+        right -= width;
+        buf.set_stringn(right, area.y, &text, width as usize, style);
+    }
+    // The pending count, as vim's showcmd does, so a stray digit isn't a surprise.
+    if app.count > 0 {
+        let text = format!(" {} ", app.count);
+        let width = (text.len() as u16).min(right - area.x);
+        buf.set_stringn(right - width, area.y, &text, width as usize, t.accent().patch(BOLD));
+    }
 }
 
 #[cfg(test)]
@@ -447,7 +461,45 @@ mod tests {
             press(&mut app, '*');
             render(&mut app, w, h);
             press(&mut app, 'q');
+            press(&mut app, 't');
+            press(&mut app, '/');
+            render(&mut app, w, h);
+            app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+            app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         }
+    }
+
+    #[test]
+    fn pending_count_shows_in_the_status_bar() {
+        let mut app = app();
+        press(&mut app, '1');
+        press(&mut app, '2');
+        let status = render(&mut app, 120, 40).pop().unwrap();
+        assert!(status.trim_end().ends_with(" 12"), "{status}");
+        press(&mut app, 'j');
+        let status = render(&mut app, 120, 40).pop().unwrap();
+        assert!(!status.trim_end().ends_with(" 12"), "the motion used it up: {status}");
+    }
+
+    #[test]
+    fn theme_picker_has_a_search_bar_like_help() {
+        let mut app = app();
+        press(&mut app, 't');
+        let all = render(&mut app, 120, 40).join("\n");
+        assert!(all.contains("Press / to search themes") && all.contains("gruvbox"), "{all}");
+        assert!(all.contains("✓ default"), "the saved theme is marked: {all}");
+        app.update(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        let all = render(&mut app, 120, 40).join("\n");
+        assert!(all.contains("✓ default") && !all.contains("✓ gruvbox"), "moving only previews: {all}");
+        press(&mut app, '/');
+        for c in "zz".chars() {
+            press(&mut app, c);
+        }
+        let all = render(&mut app, 120, 40).join("\n");
+        assert!(
+            all.contains("/ zz") && all.contains("No matching themes") && all.contains("esc clears"),
+            "{all}"
+        );
     }
 
     #[test]
