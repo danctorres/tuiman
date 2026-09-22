@@ -8,7 +8,7 @@ use crate::model::Item;
 use crate::Result;
 
 const ENDPOINT: &str = "https://api.github.com/graphql";
-/// Each repository costs five blob lookups, so batches stay modest.
+/// Each repository costs six object lookups, so batches stay modest.
 const BATCH: usize = 40;
 
 const FRAGMENT: &str = r#"
@@ -21,6 +21,7 @@ fragment F on Repository {
   py: object(expression: "HEAD:pyproject.toml") { ... on Blob { text } }
   gomod: object(expression: "HEAD:go.mod") { ... on Blob { text } }
   maingo: object(expression: "HEAD:main.go") { id }
+  src: object(expression: "HEAD:src") { ... on Tree { entries { name } } }
 }"#;
 
 /// Fills in GitHub metadata and returns the indices of items whose repository
@@ -79,6 +80,10 @@ fn apply(item: &mut Item, repo: &Value) {
     item.manifests.pyproject_toml = text("py");
     item.manifests.go_mod = text("gomod");
     item.manifests.has_root_main_go = repo["maingo"].is_object();
+    // Cargo's automatic binary targets: `src/main.rs` and `src/bin/`.
+    let src = repo["src"]["entries"].as_array().into_iter().flatten();
+    item.manifests.has_rust_bin =
+        src.filter_map(|e| e["name"].as_str()).any(|n| n == "main.rs" || n == "bin");
 }
 
 #[cfg(test)]
@@ -103,7 +108,8 @@ mod tests {
             "primaryLanguage": { "name": "Rust" },
             "licenseInfo": { "spdxId": "MIT" },
             "cargo": { "text": "[package]\nname = \"bottom\"" },
-            "npm": null, "py": null, "gomod": null, "maingo": null
+            "npm": null, "py": null, "gomod": null, "maingo": null,
+            "src": { "entries": [{ "name": "lib.rs" }, { "name": "bin" }] }
         });
         let mut item = Item { repo: Some("old-owner/bottom".into()), ..Item::default() };
         apply(&mut item, &node);
@@ -115,7 +121,7 @@ mod tests {
         assert!(item.archived);
         assert_eq!((item.language.as_str(), item.license.as_str()), ("Rust", "MIT"));
         assert!(item.manifests.cargo_toml.is_some() && item.manifests.go_mod.is_none());
-        assert!(!item.manifests.has_root_main_go);
+        assert!(!item.manifests.has_root_main_go && item.manifests.has_rust_bin);
     }
 
     #[test]
