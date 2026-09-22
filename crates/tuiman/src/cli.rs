@@ -37,6 +37,7 @@ filters:
 environment:
   TUIMAN_INDEX_URL       https URL or local path of index.bin
   TUIMAN_CACHE_DIR       where the index and scan results are cached
+  TUIMAN_POWERLINE=1     Nerd Font separators in the status bar
   TUIMAN_TRACE=1         print startup and frame timings on exit";
 
 type CliResult = io::Result<ExitCode>;
