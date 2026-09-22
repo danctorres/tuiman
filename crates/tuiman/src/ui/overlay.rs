@@ -94,6 +94,11 @@ pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Optio
         }
         let width = inner.width.saturating_sub(indent) as usize;
         buf.set_stringn(inner.x + indent, y, item, width, style);
+        // Theme names are lowercase, and the filter matches them lowercased.
+        if let Some(Some(filter)) = search {
+            let col = (inner.x + indent, width as u16);
+            super::lit_sub(buf, y, col, item, &filter.to_lowercase(), i == picker.selected, t);
+        }
     }
     cursor
 }
@@ -153,7 +158,13 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
         }
         let keys_style = if selected { t.selected() } else { t.accent() };
         buf.set_stringn(inner.x, y, keys, 16, keys_style);
-        buf.set_stringn(inner.x + 17, y, what, inner.width.saturating_sub(17) as usize, Style::new());
+        let what_w = inner.width.saturating_sub(17);
+        buf.set_stringn(inner.x + 17, y, what, what_w as usize, Style::new());
+        // The filter matches keys or description, by case, so both are worth lighting.
+        if let Some(filter) = filter {
+            super::lit_sub(buf, y, (inner.x, 16), keys, filter, selected, t);
+            super::lit_sub(buf, y, (inner.x + 17, what_w), what, filter, selected, t);
+        }
     }
     cursor
 }

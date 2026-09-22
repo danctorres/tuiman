@@ -1239,6 +1239,7 @@ dependencies = [
  "nucleo-matcher",
  "ratatui",
  "tuiman-index",
+ "unicode-width",
  "ureq",
 ]
 

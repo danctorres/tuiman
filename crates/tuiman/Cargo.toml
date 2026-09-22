@@ -14,6 +14,7 @@ categories = ["command-line-utilities"]
 nucleo-matcher = "0.3"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 tuiman-index = { path = "../tuiman-index", version = "0.1.1" }
+unicode-width = "0.2"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 [lints]

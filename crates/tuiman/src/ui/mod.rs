@@ -8,6 +8,8 @@
 mod format;
 mod overlay;
 
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -15,6 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use tuiman_index::Row;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Mode, FLASH_TICKS};
 use crate::managers::MANAGERS;
@@ -211,8 +214,17 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
         let x = inner.right().saturating_sub(count.len() as u16 + 1);
         buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { t.dim() });
         // After the text, which would otherwise paint over the sweep.
-        if id == app.query.category {
+        let on_bar = id == app.query.category;
+        if on_bar {
             cursor_bar(buf, line, t, app.sidebar_focused);
+        }
+        // Show which letters the sidebar search jumped on: only on the row it
+        // landed on, and only in the name, which is all the search looks at.
+        // After the bar, so the match is styled for whatever it sits on.
+        if let (Mode::CategorySearch { text, .. }, true, Some(_)) = (&app.mode, on_bar, id) {
+            let icon = label.width() - name.width();
+            let col = (inner.x + 1 + icon as u16, room.saturating_sub(icon) as u16);
+            lit_sub(buf, y, col, &name.to_lowercase(), &text.to_lowercase(), on_bar, t);
         }
     }
 }
@@ -304,6 +316,11 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
 
     rail(buf, area, app.view.rows.len(), app.offset, inner.height.saturating_sub(1) as usize, t);
     let stripe = t.stripe();
+    // Parsed once a frame; the per-row work is then just the visible cells.
+    let search = match app.query.text.trim() {
+        "" => None,
+        text => Some(Pattern::parse(text, CaseMatching::Ignore, Normalization::Smart)),
+    };
     let body = (inner.y + 1..inner.bottom()).zip(app.view.rows.iter().enumerate().skip(app.offset));
     for (y, (i, &row)) in body {
         let cat = &app.catalog;
@@ -345,7 +362,94 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         if selected {
             cursor_bar(buf, Rect::new(inner.x, y, inner.width, 1), t, !app.sidebar_focused);
         }
+        // Light up where the search landed, in whichever cell it matched.
+        // After the bar, so the match is styled for whatever it sits on.
+        if let Some(search) = &search {
+            let name = (inner.x + cols.name.0, cols.name.1);
+            let desc = (inner.x + cols.desc.0, cols.desc.1);
+            if !lit(buf, y, name, cat.name(row), search, selected, t) {
+                lit(buf, y, desc, cat.desc(row), search, selected, t);
+            }
+        }
     }
+}
+
+/// Lights up the characters at `hits`, indices into the text that was just
+/// drawn into this cell, counted one per cell: by grapheme, which is how both
+/// nucleo's `Utf32Str` and ratatui's `set_stringn` count. Walks the cells that
+/// were written, stepping over the trailing cell of a wide character, so the
+/// cost stays at what is on screen. Must run after any selection bar, which
+/// repaints the whole row.
+fn paint(buf: &mut Buffer, y: u16, (x, w): (u16, u16), hits: &[u32], on_bar: bool, t: &Theme) {
+    // On the selection bar the accent is the background, so the match takes
+    // the base foreground there instead of vanishing into it.
+    let fg = if on_bar { t.fg } else { t.accent };
+    let style = Style::new().fg(fg).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    let mut hits = hits.iter().peekable();
+    let mut index = 0;
+    // Clamped, since a fixed-width column can run past a narrow terminal.
+    let end = (x + w).min(buf.area.right());
+    let mut cx = x;
+    while cx < end {
+        let cell = &mut buf[(cx, y)];
+        // A wide character's second cell holds a blank, not a character of
+        // the text, so it is skipped rather than counted.
+        cx += cell.symbol().width().max(1) as u16;
+        match hits.peek() {
+            Some(&&hit) if hit == index => {
+                cell.set_style(cell.style().patch(style));
+                hits.next();
+            }
+            Some(_) => {}
+            None => break,
+        }
+        index += 1;
+    }
+}
+
+/// Lights up what `search` fuzzy-matched in `text`, and says whether it
+/// matched at all. For the table, the one panel that searches fuzzily.
+fn lit(
+    buf: &mut Buffer,
+    y: u16,
+    col: (u16, u16),
+    text: &str,
+    search: &Pattern,
+    on_bar: bool,
+    t: &Theme,
+) -> bool {
+    thread_local! {
+        static SCRATCH: std::cell::RefCell<(Matcher, Vec<char>, Vec<u32>)> = std::cell::RefCell::new((
+            Matcher::new(Config::DEFAULT),
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
+    SCRATCH.with_borrow_mut(|(matcher, chars, hits)| {
+        hits.clear();
+        if search.indices(Utf32Str::new(text, chars), matcher, hits).is_none() {
+            return false;
+        }
+        hits.sort_unstable();
+        hits.dedup();
+        paint(buf, y, col, hits, on_bar, t);
+        true
+    })
+}
+
+/// Lights up `needle` where it occurs in `text`, the plain substring the
+/// sidebar and the overlay filters search with. Matches exactly as given, so
+/// a panel that ignores case hands over lowercased copies, and one that
+/// honours it, like the help list, does not. Counts chars, which are the
+/// graphemes `paint` wants for the plain names it is handed.
+pub fn lit_sub(buf: &mut Buffer, y: u16, col: (u16, u16), text: &str, needle: &str, on_bar: bool, t: &Theme) {
+    if needle.is_empty() {
+        return;
+    }
+    let Some(at) = text.find(needle) else { return };
+    let from = text[..at].chars().count() as u32;
+    let hits: Vec<u32> = (from..from + needle.chars().count() as u32).collect();
+    paint(buf, y, col, &hits, on_bar, t);
 }
 
 /// A thumb on the panel's right border showing where the page sits in the
@@ -858,6 +962,121 @@ mod tests {
         press(&mut app, 'x');
         let status = render(&mut app, 120, 40).pop().unwrap();
         assert!(!status.trim_end().ends_with('x'), "{status}");
+    }
+
+    #[test]
+    fn search_lights_up_the_characters_it_matched() {
+        let mut app = app();
+        app.theme = crate::theme::by_name("nord");
+        let accent = THEMES[app.theme].accent;
+        press(&mut app, '/');
+        for c in "bt".chars() {
+            press(&mut app, c);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let (page, sidebar) = layout(Rect::new(0, 0, 120, 30));
+        app.set_layout(page, sidebar);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        // The second row, since the selected one is painted over by the bar.
+        let row = areas(Rect::new(0, 0, 120, 30)).table.y + 3;
+        let lit: String =
+            (0..120).filter(|&x| buf[(x, row)].fg == accent).map(|x| buf[(x, row)].symbol()).collect();
+        assert_eq!(lit, "bt", "the matched letters of bottom: {lit}");
+        let table = areas(Rect::new(0, 0, 120, 30)).table;
+        let bar = table.y + 2;
+        let on_bar: Vec<_> = (table.x..table.right())
+            .map(|x| &buf[(x, bar)])
+            .filter(|c| c.fg == THEMES[app.theme].fg)
+            .collect();
+        let lit: String = on_bar.iter().map(|c| c.symbol()).collect();
+        assert_eq!(lit, "bt", "on the selected row the match takes the base foreground: {lit}");
+        assert!(on_bar.iter().all(|c| c.modifier.contains(Modifier::UNDERLINED)));
+    }
+
+    #[test]
+    fn a_match_after_a_wide_character_stays_on_its_letter() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 1));
+        buf.set_string(0, 0, "🚀 fast", Style::new());
+        // Char 2 is the "f", which sits in cell 3 behind the two-cell rocket.
+        paint(&mut buf, 0, (0, 20), &[2], false, &THEMES[0]);
+        let lit: String = (0..20)
+            .filter(|&x| buf[(x, 0)].modifier.contains(Modifier::UNDERLINED))
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        assert_eq!(lit, "f");
+    }
+
+    /// Every character in `region` wearing the match style, in reading order,
+    /// checking that none has sunk into its background. A region, since the
+    /// details pane underlines its link either way.
+    fn underlined(app: &mut App, screen: Rect, region: Rect) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(screen.width, screen.height)).unwrap();
+        let (page, sidebar) = layout(screen);
+        app.set_layout(page, sidebar);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (region.y..region.bottom())
+            .flat_map(|y| (region.x..region.right()).map(move |x| (x, y)))
+            .filter(|&at| buf[at].modifier.contains(Modifier::UNDERLINED))
+            .inspect(|&at| {
+                assert_ne!(buf[at].fg, buf[at].bg, "{:?} at {at:?} is invisible", buf[at].symbol())
+            })
+            .map(|at| buf[at].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn the_other_panels_light_up_their_matches_too() {
+        let mut app = app();
+        let screen = Rect::new(0, 0, 120, 40);
+        let areas = areas(screen);
+        // Everything but the details pane, whose link is underlined regardless.
+        let panels = Rect { height: areas.details.y, ..screen };
+        press(&mut app, 'h');
+        press(&mut app, '/');
+        for c in "li".chars() {
+            press(&mut app, c);
+        }
+        assert_eq!(
+            underlined(&mut app, screen, areas.sidebar),
+            "Li",
+            "the sidebar marks the category it jumped to"
+        );
+        // One letter matches several names, but only the row it jumped to is lit.
+        esc(&mut app);
+        press(&mut app, 'h');
+        press(&mut app, '/');
+        press(&mut app, 'l');
+        assert_eq!(underlined(&mut app, screen, areas.sidebar), "l", "only the row the search landed on");
+        esc(&mut app);
+
+        press(&mut app, '?');
+        press(&mut app, '/');
+        for c in "sort".chars() {
+            press(&mut app, c);
+        }
+        assert_eq!(underlined(&mut app, screen, panels), "sort", "help marks the row it narrowed to");
+        esc(&mut app);
+        esc(&mut app);
+
+        press(&mut app, 't');
+        press(&mut app, '/');
+        for c in "gru".chars() {
+            press(&mut app, c);
+        }
+        // Every matching theme is marked, not just the selected one.
+        assert_eq!(underlined(&mut app, screen, panels), "grugru", "and so does the theme list");
+    }
+
+    #[test]
+    fn a_match_past_a_narrow_terminal_is_not_painted() {
+        // "b" sits at the far end of "tab shift-tab", past a 12-column screen.
+        let mut app = app();
+        press(&mut app, '?');
+        press(&mut app, '/');
+        press(&mut app, 'b');
+        render(&mut app, 12, 12);
     }
 
     #[test]
