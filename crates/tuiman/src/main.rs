@@ -123,6 +123,13 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                     };
                     app.dirty = true;
                 }
+                Effect::Copy(text) => {
+                    app.status = match copy(&text) {
+                        true => format!("Copied {text}"),
+                        false => "No clipboard tool found (pbcopy, clip.exe, wl-copy, xclip, xsel)".into(),
+                    };
+                    app.dirty = true;
+                }
                 Effect::RunInTerminal(job) => {
                     let guard = input.pause();
                     let ok = run_in_terminal(&job);
@@ -201,5 +208,27 @@ fn open_url(url: &str) -> bool {
         let mut opener = Command::new(bin);
         opener.arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         opener.spawn().is_ok()
+    })
+}
+
+fn copy(text: &str) -> bool {
+    let tools: &[&[&str]] = if cfg!(target_os = "macos") {
+        &[&["pbcopy"]]
+    } else {
+        &[
+            &["clip.exe"],
+            &["wl-copy"],
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+        ]
+    };
+    tools.iter().any(|argv| {
+        let Some(bin) = paths::which(argv[0]) else { return false };
+        let mut tool = Command::new(bin);
+        tool.args(&argv[1..]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        let Ok(mut child) = tool.spawn() else { return false };
+        // Dropping stdin closes it; wl-copy and xclip then fork to keep the selection.
+        let written = child.stdin.take().is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
+        child.wait().is_ok_and(|status| status.success()) && written
     })
 }

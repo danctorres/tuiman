@@ -51,6 +51,7 @@ pub enum Effect {
     /// Hand the terminal to the command (sudo prompts and the like).
     RunInTerminal(Job),
     OpenUrl(String),
+    Copy(String),
     SaveInstalled,
     /// Remember the theme called this for the next start.
     SaveTheme(&'static str),
@@ -89,7 +90,7 @@ pub struct Help {
     pub selected: usize,
 }
 
-pub const HELP: [(&str, &str); 20] = [
+pub const HELP: [(&str, &str); 21] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
     ("g G", "first / last"),
@@ -105,6 +106,7 @@ pub const HELP: [(&str, &str); 20] = [
     ("c", "clear all filters"),
     ("enter", "install, or uninstall if installed"),
     ("o", "open the project page"),
+    ("y", "copy the name"),
     ("r", "refresh the index"),
     ("v", "view job output"),
     ("t", "colour theme"),
@@ -437,6 +439,11 @@ impl App {
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_row() {
                     return vec![Effect::OpenUrl(self.catalog.url(row).to_owned())];
+                }
+            }
+            KeyCode::Char('y') => {
+                if let Some(row) = self.selected_row() {
+                    return vec![Effect::Copy(self.catalog.name(row).to_owned())];
                 }
             }
             KeyCode::Char('r') if !self.refreshing => {
