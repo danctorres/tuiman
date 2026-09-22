@@ -167,7 +167,10 @@ mod tests {
         };
         assert_eq!(names(&c, &q(|q| q.min_stars = 10_000), &inst), ["lazygit", "btop", "bottom"]);
         assert_eq!(names(&c, &q(|q| q.installed_only = true), &inst), ["btop"]);
-        assert_eq!(names(&c, &q(|q| q.installable_only = true), &inst), ["lazygit", "btop", "bottom"]);
+        assert_eq!(
+            names(&c, &q(|q| q.installable_only = true), &inst),
+            ["lazygit", "btop", "bottom", "ratatui"]
+        );
         assert_eq!(names(&c, &q(|q| q.category = Some(0)), &inst), ["btop", "bottom"]);
         let rust = c.rows().find(|&r| c.language(r) == "Rust").map(|r| c.language_id(r));
         let mut rust_apps = Query { language: rust, min_stars: 9_500, ..Query::default() };

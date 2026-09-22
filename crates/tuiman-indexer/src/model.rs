@@ -44,6 +44,7 @@ pub struct Manifests {
     pub pyproject_toml: Option<String>,
     pub go_mod: Option<String>,
     pub has_root_main_go: bool,
+    pub has_rust_bin: bool,
 }
 
 impl Item {

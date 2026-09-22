@@ -14,7 +14,7 @@ pub type Row = u32;
 
 /// Entry is flagged as archived upstream.
 pub const FLAG_ARCHIVED: u8 = 1 << 0;
-/// Entry is a TUI *library*, not an application: browsable, never installable.
+/// Entry is a TUI *library*; installable only if its registry package ships a binary.
 pub const FLAG_LIBRARY: u8 = 1 << 1;
 
 const STARS_UNKNOWN: u32 = u32::MAX;

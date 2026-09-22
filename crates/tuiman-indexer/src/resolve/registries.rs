@@ -15,31 +15,32 @@ use crate::http::Http;
 use crate::model::{github_repo, Item};
 
 pub fn resolve(http: &Http, items: &[Item]) -> Vec<Found> {
-    let apps = || items.iter().enumerate().filter(|(_, item)| !item.library);
+    let all = || items.iter().enumerate();
 
     let mut found: Vec<Found> =
-        apps().filter_map(|(i, item)| Some((i, Ecosystem::Go, go_package(item)?))).collect();
+        all().filter_map(|(i, item)| Some((i, Ecosystem::Go, go_package(item)?))).collect();
 
     // One thread per registry: they are independent hosts, and crates.io asks
     // crawlers to stay at one request per second.
     let verified = thread::scope(|s| {
         let crates = s.spawn(|| {
-            verify(apps(), Ecosystem::Crates, Duration::from_secs(1), cargo_name, |name| {
+            verify(all(), Ecosystem::Crates, Duration::from_secs(1), cargo_name, |name| {
                 let doc = http.get_json(&format!("https://crates.io/api/v1/crates/{name}"))?;
                 Ok(doc.map(|d| vec![d["crate"]["repository"].clone(), d["crate"]["homepage"].clone()]))
             })
         });
         let npm = s.spawn(|| {
-            verify(apps(), Ecosystem::Npm, Duration::from_millis(100), npm_name, |name| {
-                let doc =
-                    http.get_json(&format!("https://registry.npmjs.org/{}", name.replace('/', "%2F")))?;
-                Ok(doc.map(|d| {
+            verify(all(), Ecosystem::Npm, Duration::from_millis(100), npm_name, |name| {
+                // `/latest` is one version's manifest, not every release ever.
+                let doc = http
+                    .get_json(&format!("https://registry.npmjs.org/{}/latest", name.replace('/', "%2F")))?;
+                Ok(doc.filter(npm_runnable).map(|d| {
                     vec![d["repository"]["url"].clone(), d["repository"].clone(), d["homepage"].clone()]
                 }))
             })
         });
         let pypi = s.spawn(|| {
-            verify(apps(), Ecosystem::Pypi, Duration::from_millis(100), pypi_name, |name| {
+            verify(all(), Ecosystem::Pypi, Duration::from_millis(100), pypi_name, |name| {
                 let doc = http.get_json(&format!("https://pypi.org/pypi/{name}/json"))?;
                 Ok(doc.map(|d| {
                     let mut urls = vec![d["info"]["home_page"].clone()];
@@ -82,8 +83,12 @@ fn links_back(item: &Item, urls: &[Value]) -> bool {
     urls.iter().filter_map(Value::as_str).filter_map(github_repo).any(|repo| item.is_repo(&repo))
 }
 
+/// `cargo install` needs a binary target: `src/main.rs`, `src/bin/` or a `[[bin]]`.
 fn cargo_name(item: &Item) -> Option<String> {
     let manifest: toml::Table = item.manifests.cargo_toml.as_deref()?.parse().ok()?;
+    if !item.manifests.has_rust_bin && !manifest.contains_key("bin") {
+        return None;
+    }
     let package = manifest.get("package")?;
     if package.get("publish").and_then(toml::Value::as_bool) == Some(false) {
         return None;
@@ -93,8 +98,14 @@ fn cargo_name(item: &Item) -> Option<String> {
 
 fn npm_name(item: &Item) -> Option<String> {
     let manifest: Value = serde_json::from_str(item.manifests.package_json.as_deref()?).ok()?;
-    let runnable = manifest.get("bin").is_some() && manifest["private"].as_bool() != Some(true);
-    manifest["name"].as_str().filter(|_| runnable).map(str::to_owned)
+    let public = manifest["private"].as_bool() != Some(true);
+    manifest["name"].as_str().filter(|_| public).map(str::to_owned)
+}
+
+/// The `bin` that `npm install -g` honours is the published one, which build
+/// steps often add (carbonyl's repository `package.json` has none).
+fn npm_runnable(latest: &Value) -> bool {
+    latest["bin"].is_object() || latest["bin"].is_string()
 }
 
 fn pypi_name(item: &Item) -> Option<String> {
@@ -129,21 +140,30 @@ mod tests {
     #[test]
     fn cargo_candidates() {
         let pkg = |toml: &str| {
-            cargo_name(&item("a/b", Manifests { cargo_toml: Some(toml.into()), ..Manifests::default() }))
+            cargo_name(&item(
+                "a/b",
+                Manifests { cargo_toml: Some(toml.into()), has_rust_bin: true, ..Manifests::default() },
+            ))
         };
         assert_eq!(pkg("[package]\nname = \"bottom\"\nversion = \"1.0.0\""), Some("bottom".into()));
         assert_eq!(pkg("[package]\nname = \"x\"\npublish = false"), None);
         assert_eq!(pkg("[workspace]\nmembers = [\"a\"]"), None);
         assert_eq!(pkg("not toml ["), None);
+
+        let lib = |toml: &str| {
+            cargo_name(&item("a/b", Manifests { cargo_toml: Some(toml.into()), ..Manifests::default() }))
+        };
+        assert_eq!(lib("[package]\nname = \"ratatui\""), None);
+        assert_eq!(lib("[package]\nname = \"x\"\n[[bin]]\nname = \"x\""), Some("x".into()));
     }
 
     #[test]
-    fn npm_candidates_need_a_bin() {
+    fn npm_candidates_are_public() {
         let pkg = |json: &str| {
             npm_name(&item("a/b", Manifests { package_json: Some(json.into()), ..Manifests::default() }))
         };
         assert_eq!(pkg(r#"{"name":"@s/cli","bin":{"cli":"x.js"}}"#), Some("@s/cli".into()));
-        assert_eq!(pkg(r#"{"name":"lib"}"#), None);
+        assert_eq!(pkg(r#"{"name":"carbonyl"}"#), Some("carbonyl".into()));
         assert_eq!(pkg(r#"{"name":"app","bin":"x.js","private":true}"#), None);
     }
 
@@ -161,6 +181,14 @@ mod tests {
             Some("dolphie".into())
         );
         assert_eq!(pkg("[project]\nname = \"justalib\""), None);
+    }
+
+    #[test]
+    fn npm_bin_comes_from_the_published_latest() {
+        assert!(npm_runnable(&json!({ "bin": { "carbonyl": "index.sh" } })));
+        assert!(npm_runnable(&json!({ "bin": "cli.js" })));
+        assert!(!npm_runnable(&json!({ "bin": null })));
+        assert!(!npm_runnable(&json!({ "name": "lib" })));
     }
 
     #[test]
@@ -192,7 +220,11 @@ mod tests {
     fn verification_requires_a_link_back() {
         let it = item(
             "clementtsang/bottom",
-            Manifests { cargo_toml: Some("[package]\nname = \"bottom\"".into()), ..Manifests::default() },
+            Manifests {
+                cargo_toml: Some("[package]\nname = \"bottom\"".into()),
+                has_rust_bin: true,
+                ..Manifests::default()
+            },
         );
         let items = [it];
         let run = |urls: Option<Vec<Value>>| {
