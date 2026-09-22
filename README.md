@@ -23,6 +23,22 @@ cargo install --git https://github.com/danctorres/tuiman tuiman
 
 Linux and macOS. Requires Rust 1.85+.
 
+### Prebuilt binaries
+
+Skip compiling with [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+
+```sh
+cargo binstall tuiman
+```
+
+Or download the file for your system from the
+[releases page](https://github.com/danctorres/tuiman/releases) and put `tuiman` on your PATH:
+
+```sh
+tar xzf tuiman-*.tar.gz
+mv tuiman-*/tuiman ~/.local/bin/
+```
+
 ### From source
 
 ```sh
