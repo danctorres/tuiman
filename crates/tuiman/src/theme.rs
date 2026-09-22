@@ -40,6 +40,16 @@ impl Theme {
         }
     }
 
+    /// A point on the accent-to-link sweep that borders and the selection bar
+    /// ride, or `None` for a theme on the terminal palette, which cannot blend
+    /// and would band into two flat halves instead.
+    pub fn sweep(&self, level: f32) -> Option<Color> {
+        match (self.accent, self.link) {
+            (Color::Rgb(..), Color::Rgb(..)) => Some(mix(self.accent, self.link, level)),
+            _ => None,
+        }
+    }
+
     /// The star count's colour, warming from `dim` to `stars` on a log scale
     /// so popularity reads at a glance: ~100 stars is cold, 30k is full heat.
     /// A palette that cannot blend keeps every count at full heat, rather
@@ -71,7 +81,7 @@ impl Theme {
 }
 
 /// Blends 24-bit colours; named ones cannot blend, so they switch halfway.
-pub fn mix(from: Color, to: Color, level: f32) -> Color {
+fn mix(from: Color, to: Color, level: f32) -> Color {
     match (from, to) {
         (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
             let at = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
