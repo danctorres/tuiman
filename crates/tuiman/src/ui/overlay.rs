@@ -21,12 +21,20 @@ fn frame(buf: &mut Buffer, rect: Rect, t: &Theme, title: &str, footer: &'static 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(t.accent())
-        .title_top(format!(" {title} "))
-        .title_bottom(Line::from(footer).style(t.dim()).right_aligned());
+        .title_top(format!(" {title} "));
     let inner = block.inner(rect);
     Clear.render(rect, buf);
     buf.set_style(rect, t.base());
     block.render(rect, buf);
+    super::gradient(buf, rect, t);
+    // The footer goes on after the sweep, which would otherwise light it up
+    // to the same brightness as the border it is meant to sit quietly inside.
+    if !rect.is_empty() {
+        let room = rect.width.saturating_sub(2);
+        let len = (footer.chars().count() as u16).min(room);
+        let x = rect.right().saturating_sub(len + 1);
+        buf.set_stringn(x, rect.bottom() - 1, footer, len as usize, t.dim());
+    }
     inner
 }
 

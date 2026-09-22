@@ -19,7 +19,7 @@ use tuiman_index::Row;
 use crate::app::{App, Mode, FLASH_TICKS};
 use crate::managers::MANAGERS;
 use crate::query::Sort;
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -152,6 +152,10 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
         let count = count.to_string();
         let x = inner.right().saturating_sub(count.len() as u16 + 1);
         buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { t.dim() });
+        // After the text, which would otherwise paint over the sweep.
+        if id == app.query.category {
+            cursor_bar(buf, line, t, app.sidebar_focused);
+        }
     }
 }
 
@@ -277,7 +281,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         }
         put(buf, y, cols.desc, cat.desc(row), text);
         if selected {
-            buf.set_style(Rect::new(inner.x, y, inner.width, 1), cursor(t, !app.sidebar_focused));
+            cursor_bar(buf, Rect::new(inner.x, y, inner.width, 1), t, !app.sidebar_focused);
         }
     }
 }
@@ -292,16 +296,30 @@ fn panel(t: &Theme, focused: bool) -> Block<'static> {
     }
 }
 
-/// Repaints an already-drawn border with a top-left to bottom-right gradient.
-fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
+/// Repaints an already-drawn border with a top-left to bottom-right sweep.
+pub fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
     let span = (area.width + area.height).saturating_sub(2).max(1) as f32;
     let edge = |x: u16, y: u16| x == area.x || x == area.right() - 1 || y == area.y || y == area.bottom() - 1;
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
-            if edge(x, y) {
-                let level = ((x - area.x) + (y - area.y)) as f32 / span;
-                buf[(x, y)].set_fg(theme::mix(t.accent, t.link, level));
+            let level = ((x - area.x) + (y - area.y)) as f32 / span;
+            if let (true, Some(colour)) = (edge(x, y), t.sweep(level)) {
+                buf[(x, y)].set_fg(colour);
             }
+        }
+    }
+}
+
+/// The selection bar: the same sweep as the border, so the eye reads the row
+/// and the panel as one lit thing. Flat where the theme cannot blend.
+fn cursor_bar(buf: &mut Buffer, rect: Rect, t: &Theme, focused: bool) {
+    buf.set_style(rect, cursor(t, focused));
+    if !focused {
+        return;
+    }
+    for (i, x) in (rect.x..rect.right()).enumerate() {
+        if let Some(colour) = t.sweep(i as f32 / rect.width.max(1) as f32) {
+            buf[(x, rect.y)].set_bg(colour);
         }
     }
 }
@@ -525,6 +543,7 @@ mod tests {
     use crate::installed::tests::{catalog, detected};
     use crate::installed::Installed;
     use crate::managers::by_name;
+    use crate::theme::THEMES;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -570,6 +589,24 @@ mod tests {
         press(&mut app, 's');
         let screen = render(&mut app, 120, 30);
         assert!(screen[2].contains("PUSH ▾") && !screen[2].contains("★ ▾"), "{}", screen[2]);
+    }
+
+    #[test]
+    fn the_selection_bar_and_border_sweep_across() {
+        let mut app = app();
+        app.theme = crate::theme::by_name("nord");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let row = Rect::new(0, 0, 120, 30);
+        let table = areas(row).table;
+        let bar = table.y + 2;
+        let (left, right) = (buf[(table.x + 1, bar)].bg, buf[(table.right() - 2, bar)].bg);
+        assert_ne!(left, right, "the selection bar sweeps");
+        assert_eq!(left, THEMES[app.theme].accent, "it starts at the accent");
+        let border = (buf[(table.x, table.y)].fg, buf[(table.right() - 1, table.bottom() - 1)].fg);
+        assert_eq!(border.0, THEMES[app.theme].accent);
+        assert_eq!(border.1, THEMES[app.theme].link, "and the border ends at the link colour");
     }
 
     #[test]
