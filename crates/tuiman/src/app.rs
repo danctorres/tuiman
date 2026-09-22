@@ -96,7 +96,7 @@ pub const HELP: [(&str, &str); 20] = [
     ("ctrl-d ctrl-u", "half page down / up"),
     ("tab shift-tab", "next / previous category"),
     ("/", "fuzzy search, or find a category in the sidebar"),
-    ("s", "cycle sort: stars, name, last push"),
+    ("s", "cycle sort: stars, last push, name"),
     ("*", "minimum stars"),
     ("L", "language"),
     ("i", "installed only"),
@@ -413,7 +413,8 @@ impl App {
             }
             KeyCode::Char('s') => {
                 self.query.sort = self.query.sort.next();
-                self.refilter(true);
+                // A new order is read from the top, not from wherever the old row went.
+                self.refilter(false);
             }
             KeyCode::Char('i') => {
                 self.query.installed_only ^= true;
@@ -751,6 +752,10 @@ mod tests {
         assert_eq!(app.selected, 4);
         press(&mut app, KeyCode::Char('g'));
         assert_eq!((app.selected, app.offset), (0, 0));
+
+        press(&mut app, KeyCode::Char('G'));
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!((app.selected, app.offset), (0, 0), "a new sort order starts at the top");
     }
 
     #[test]

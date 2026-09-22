@@ -57,7 +57,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `/` | fuzzy search names and descriptions |
 | `h` `l` / `←` `→` | focus categories / list; `j` `k` / `↑` `↓` then move in that panel |
 | `tab` `shift-tab` | next / previous category |
-| `s` | cycle sort: stars, name, last push |
+| `s` | cycle sort: stars, last push, name |
 | `*` `L` | minimum stars, language |
 | `i` `a` `A` | installed only, installable here only, show archived |
 | `c` | clear filters |
