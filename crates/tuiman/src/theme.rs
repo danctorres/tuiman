@@ -47,7 +47,7 @@ impl Theme {
 }
 
 /// Blends 24-bit colours; named ones cannot blend, so they switch halfway.
-fn mix(from: Color, to: Color, level: f32) -> Color {
+pub fn mix(from: Color, to: Color, level: f32) -> Color {
     match (from, to) {
         (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
             let at = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;

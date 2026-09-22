@@ -12,14 +12,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use tuiman_index::Row;
 
 use crate::app::{App, Mode, FLASH_TICKS};
 use crate::managers::MANAGERS;
 use crate::query::Sort;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -33,17 +33,25 @@ pub struct Areas {
 }
 
 /// Hand-rolled layout: four rectangles do not need a constraint solver.
+/// Tiles float with a gap around and between them, as a tiling compositor
+/// lays out windows. The gap comes out of the table's share, so the sidebar
+/// and details appear at the same sizes as without it; only a terminal too
+/// small to spare a column goes without.
 pub fn areas(area: Rect) -> Areas {
     let status_h = area.height.min(1);
-    let body_h = area.height - status_h;
-    let details_h = if body_h >= 18 { 8 } else { 0 };
+    let full_h = area.height - status_h;
+    let gap = u16::from(area.width >= 40 && full_h >= 10);
+    let body_h = full_h - gap;
+    let (x, y, width) = (area.x + gap, area.y + gap, area.width.saturating_sub(2 * gap));
+    let details_h = if full_h >= 18 { 8 } else { 0 };
     let sidebar_w = if area.width >= 90 { 24 } else { 0 };
-    let top_h = body_h - details_h;
+    let top_h = body_h - details_h - if details_h > 0 { gap } else { 0 };
+    let table_x = if sidebar_w > 0 { sidebar_w + gap } else { 0 };
     Areas {
-        sidebar: Rect::new(area.x, area.y, sidebar_w, top_h),
-        table: Rect::new(area.x + sidebar_w, area.y, area.width - sidebar_w, top_h),
-        details: Rect::new(area.x, area.y + top_h, area.width, details_h),
-        status: Rect::new(area.x, area.y + body_h, area.width, status_h),
+        sidebar: Rect::new(x, y, sidebar_w, top_h),
+        table: Rect::new(x + table_x, y, width - table_x, top_h),
+        details: Rect::new(x, y + top_h + gap, width, details_h),
+        status: Rect::new(area.x, area.y + full_h, area.width, status_h),
     }
 }
 
@@ -108,6 +116,9 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     let block = panel(t, app.sidebar_focused).title(title);
     let inner = block.inner(area);
     block.render(area, buf);
+    if app.sidebar_focused {
+        gradient(buf, area, t);
+    }
 
     let entries = std::iter::once((None, "All", app.view.category_counts.iter().sum())).chain(
         (0..app.catalog.category_count()).map(|id| {
@@ -175,6 +186,9 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
     let block = panel(t, !app.sidebar_focused).title_top(title).title_top(filters(app).right_aligned());
     let inner = block.inner(area);
     block.render(area, buf);
+    if !app.sidebar_focused {
+        gradient(buf, area, t);
+    }
     if inner.height < 2 || inner.width < 12 {
         return;
     }
@@ -252,14 +266,27 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
-/// A focusable panel: thick accent border with a bold title when focused, thin and dim otherwise.
+/// A focusable panel: rounded throughout, the focused one lit by a diagonal
+/// accent-to-link gradient the way a tiling compositor marks the active window.
 fn panel(t: &Theme, focused: bool) -> Block<'static> {
+    let block = Block::bordered().border_type(BorderType::Rounded);
     match focused {
-        true => Block::bordered()
-            .border_type(BorderType::Thick)
-            .border_style(t.accent())
-            .title_style(t.accent().patch(BOLD)),
-        false => Block::bordered().border_style(t.dim()).title_style(t.dim()),
+        true => block.border_style(t.accent()).title_style(t.accent().patch(BOLD)),
+        false => block.border_style(t.dim()).title_style(t.dim()),
+    }
+}
+
+/// Repaints an already-drawn border with a top-left to bottom-right gradient.
+fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
+    let span = (area.width + area.height).saturating_sub(2).max(1) as f32;
+    let edge = |x: u16, y: u16| x == area.x || x == area.right() - 1 || y == area.y || y == area.bottom() - 1;
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if edge(x, y) {
+                let level = ((x - area.x) + (y - area.y)) as f32 / span;
+                buf[(x, y)].set_fg(theme::mix(t.accent, t.link, level));
+            }
+        }
     }
 }
 
@@ -295,7 +322,10 @@ fn filters(app: &App) -> Line<'static> {
 
 fn details(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
-    let block = Block::bordered().border_style(t.dim());
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(t.dim())
+        .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     block.render(area, buf);
     let Some(row) = app.selected_row() else { return };
@@ -501,22 +531,22 @@ mod tests {
         let mut app = app();
         let screen = render(&mut app, 120, 30);
         let all = screen.join("\n");
-        assert!(screen[0].contains("Categories") && screen[0].contains("5/6 · sort:stars"), "{}", screen[0]);
-        assert!(screen[1].contains("NAME") && screen[1].contains("★ ▾") && screen[1].contains("LANGUAGE"));
-        assert!(screen[2].contains("lazygit") && screen[2].contains("50k") && screen[2].contains("Go"));
+        assert!(screen[1].contains("Categories") && screen[1].contains("5/6 · sort:stars"), "{}", screen[1]);
+        assert!(screen[2].contains("NAME") && screen[2].contains("★ ▾") && screen[2].contains("LANGUAGE"));
+        assert!(screen[3].contains("lazygit") && screen[3].contains("50k") && screen[3].contains("Go"));
         assert!(
-            screen[2].contains(" 1 lazygit") && screen[3].contains(" 2 btop"),
+            screen[3].contains(" 1 lazygit") && screen[4].contains(" 2 btop"),
             "line numbers: {}",
-            screen[3]
+            screen[4]
         );
-        assert!(screen[3].contains("✓") && screen[3].contains("btop"), "installed mark: {}", screen[3]);
+        assert!(screen[4].contains("✓") && screen[4].contains("btop"), "installed mark: {}", screen[4]);
         assert!(all.contains("https://github.com/o/lazygit") && all.contains("brew:lazygit"));
         assert!(all.contains("Dashboards") && all.contains("/ search"));
         assert!(!all.contains("oldtool"), "archived rows are hidden by default");
 
         press(&mut app, 's');
         let screen = render(&mut app, 120, 30);
-        assert!(screen[1].contains("PUSH ▾") && !screen[1].contains("★ ▾"), "{}", screen[1]);
+        assert!(screen[2].contains("PUSH ▾") && !screen[2].contains("★ ▾"), "{}", screen[2]);
     }
 
     #[test]
@@ -528,7 +558,7 @@ mod tests {
         assert!(all.contains("lazygit") && all.contains("DESCRIPTION"));
         app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         let screen = render(&mut app, 60, 12);
-        assert!(screen[0].contains("cat:Dashboards"), "{}", screen[0]);
+        assert!(screen[1].contains("cat:Dashboards"), "{}", screen[1]);
     }
 
     #[test]
@@ -629,7 +659,7 @@ mod tests {
         press(&mut app, 'b');
         press(&mut app, 't');
         let screen = render(&mut app, 100, 24);
-        assert!(screen[0].contains("/bt"), "{}", screen[0]);
+        assert!(screen[1].contains("/bt"), "{}", screen[1]);
         assert!(!screen.join("\n").contains("lazygit description"));
 
         app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
