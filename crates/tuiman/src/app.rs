@@ -16,6 +16,8 @@ use crate::query::{Query, View};
 use crate::theme::{Theme, THEMES};
 
 const LOG_LINES: usize = 2000;
+/// How long the hint for a pressed key stays lit: about a second of 80 ms ticks.
+pub const FLASH_TICKS: u8 = 14;
 pub const STAR_PRESETS: [u32; 7] = [0, 100, 500, 1_000, 5_000, 10_000, 50_000];
 
 pub enum Event {
@@ -188,6 +190,8 @@ pub struct App {
     pub count: usize,
     /// The last command key with its count, echoed like vim's showcmd.
     pub last_key: String,
+    /// Ticks left to light up `last_key`'s hint in the status bar.
+    pub flash: u8,
 }
 
 impl App {
@@ -218,6 +222,7 @@ impl App {
             quit_armed: false,
             count: 0,
             last_key: String::new(),
+            flash: 0,
         };
         app.refilter(false);
         app
@@ -237,9 +242,13 @@ impl App {
         self.quiet_refresh = true;
     }
 
-    /// Whether something is in flight and the spinner should animate.
+    /// Whether something is in flight or lit, so ticks should keep coming.
     pub fn busy(&self) -> bool {
-        self.running.is_some() || self.refreshing || self.detecting || self.scans_pending > 0
+        self.running.is_some()
+            || self.refreshing
+            || self.detecting
+            || self.scans_pending > 0
+            || self.flash > 0
     }
 
     pub fn update(&mut self, event: Event) -> Vec<Effect> {
@@ -247,7 +256,10 @@ impl App {
         match event {
             Event::Key(key) => return self.on_key(key),
             Event::Resize => {}
-            Event::Tick => self.spinner = self.spinner.wrapping_add(1),
+            Event::Tick => {
+                self.spinner = self.spinner.wrapping_add(1);
+                self.flash = self.flash.saturating_sub(1);
+            }
             Event::Detected(detected) => {
                 self.scans_pending += detected.len();
                 self.detecting = false;
@@ -400,6 +412,7 @@ impl App {
 
     fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, quit_armed: bool, count: usize) -> Vec<Effect> {
         self.status.clear();
+        self.flash = FLASH_TICKS;
         let n = count.max(1) as isize;
         let half_page = (self.page / 2).max(1) as isize;
         if self.sidebar_focused {
@@ -1125,6 +1138,19 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.view.rows.len(), 2);
+    }
+
+    #[test]
+    fn a_pressed_key_lights_its_hint_for_a_while() {
+        let mut app = app(&[]);
+        assert!(!app.busy());
+        press(&mut app, KeyCode::Char('s'));
+        assert!(app.flash > 0 && app.busy(), "ticks run while the hint is lit");
+        for _ in 0..FLASH_TICKS {
+            app.update(Event::Tick);
+        }
+        assert_eq!(app.flash, 0);
+        assert!(!app.busy(), "and stop once it goes dark");
     }
 
     #[test]
