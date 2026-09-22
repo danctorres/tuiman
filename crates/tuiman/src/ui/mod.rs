@@ -243,6 +243,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
+    let stripe = t.stripe();
     let body = (inner.y + 1..inner.bottom()).zip(app.view.rows.iter().enumerate().skip(app.offset));
     for (y, (i, &row)) in body {
         let cat = &app.catalog;
@@ -252,7 +253,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         // Alternating rows sit on a shade of the background, so a wide table
         // still reads across. Themes on the terminal palette get no stripe.
         if i % 2 == 1 {
-            buf.set_style(Rect::new(inner.x, y, inner.width, 1), t.stripe());
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), stripe);
         }
 
         // A job on this row outranks the installed mark: spinning while it runs, ⋯ while queued.
@@ -297,16 +298,26 @@ fn panel(t: &Theme, focused: bool) -> Block<'static> {
 }
 
 /// Repaints an already-drawn border with a top-left to bottom-right sweep.
+/// Walks the perimeter only, so it costs the border, not the panel.
 pub fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
+    if area.is_empty() || t.sweep(0.0).is_none() {
+        return;
+    }
     let span = (area.width + area.height).saturating_sub(2).max(1) as f32;
-    let edge = |x: u16, y: u16| x == area.x || x == area.right() - 1 || y == area.y || y == area.bottom() - 1;
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            let level = ((x - area.x) + (y - area.y)) as f32 / span;
-            if let (true, Some(colour)) = (edge(x, y), t.sweep(level)) {
-                buf[(x, y)].set_fg(colour);
-            }
+    let (top, bottom, left, right) = (area.y, area.bottom() - 1, area.x, area.right() - 1);
+    let mut paint = |x: u16, y: u16| {
+        let level = ((x - area.x) + (y - area.y)) as f32 / span;
+        if let Some(colour) = t.sweep(level) {
+            buf[(x, y)].set_fg(colour);
         }
+    };
+    for x in left..=right {
+        paint(x, top);
+        paint(x, bottom);
+    }
+    for y in top + 1..bottom {
+        paint(left, y);
+        paint(right, y);
     }
 }
 
@@ -314,7 +325,7 @@ pub fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
 /// and the panel as one lit thing. Flat where the theme cannot blend.
 fn cursor_bar(buf: &mut Buffer, rect: Rect, t: &Theme, focused: bool) {
     buf.set_style(rect, cursor(t, focused));
-    if !focused {
+    if !focused || t.sweep(0.0).is_none() {
         return;
     }
     for (i, x) in (rect.x..rect.right()).enumerate() {
