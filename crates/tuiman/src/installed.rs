@@ -144,6 +144,20 @@ impl Installed {
     }
 }
 
+/// Why `action` has no [`Installed::choices`] on `row`. `page_hint` says how
+/// to reach the project page from where the message is shown.
+pub fn impossible(catalog: &Catalog, row: Row, action: Action, page_hint: &str) -> String {
+    let name = catalog.name(row);
+    if action == Action::Uninstall {
+        return format!("{name} is not installed through a package manager tuiman knows");
+    }
+    let known: Vec<&str> = catalog.packages(row).map(|(eco, _)| eco.name()).collect();
+    match known.is_empty() {
+        true => format!("no known package for {name} ({page_hint})"),
+        false => format!("{name} is packaged for {}, none of which is on this machine", known.join(", ")),
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tuiman_index::{Catalog, Row};
 
-use crate::installed::{Choice, Installed};
+use crate::installed::{self, Choice, Installed};
 use crate::managers::{Action, ManagerId, MANAGERS};
 use crate::query::{Query, View};
 use crate::theme::{Theme, THEMES};
@@ -596,21 +596,7 @@ impl App {
         let name = self.catalog.name(row);
         let choices = self.installed.choices(&self.catalog, row, action);
         if choices.is_empty() {
-            self.status = match action {
-                Action::Uninstall => {
-                    format!("{name} is not installed through a package manager tuiman knows")
-                }
-                Action::Install => {
-                    let known: Vec<&str> = self.catalog.packages(row).map(|(eco, _)| eco.name()).collect();
-                    match known.is_empty() {
-                        true => format!("No known package for {name} (press o to open its page)"),
-                        false => format!(
-                            "{name} is packaged for {}, none of which is on this machine",
-                            known.join(", ")
-                        ),
-                    }
-                }
-            };
+            self.status = installed::impossible(&self.catalog, row, action, "press o to open its page");
             return;
         }
         let items =
