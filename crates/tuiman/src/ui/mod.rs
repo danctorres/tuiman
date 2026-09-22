@@ -88,6 +88,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     status(buf, areas.status, app);
 
+    // A modal floats over a darkened screen, the way a compositor dims what is
+    // behind a dialog. The overlay clears its own box back to full strength.
+    if matches!(app.mode, Mode::Picker(_) | Mode::Help(_) | Mode::Log) {
+        dim_backdrop(buf, area, app.theme());
+    }
     match &app.mode {
         Mode::Picker(picker) => {
             if let Some(pos) = overlay::picker(buf, area, picker, app.theme()) {
@@ -318,6 +323,27 @@ pub fn gradient(buf: &mut Buffer, area: Rect, t: &Theme) {
     for y in top + 1..bottom {
         paint(left, y);
         paint(right, y);
+    }
+}
+
+/// Sinks everything on screen towards the background, so a modal drawn on top
+/// of it reads as the lit thing. Costs one pass, and only while a modal is up.
+fn dim_backdrop(buf: &mut Buffer, area: Rect, t: &Theme) {
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let cell = &mut buf[(x, y)];
+            match t.sink(cell.fg) {
+                // A theme on the terminal palette cannot blend, so it leans on
+                // the terminal's own dim attribute instead.
+                None => cell.modifier.insert(Modifier::DIM),
+                Some(fg) => {
+                    cell.set_fg(fg);
+                    if let Some(bg) = t.sink(cell.bg) {
+                        cell.set_bg(bg);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -622,6 +648,22 @@ mod tests {
         let border = (buf[(table.x, table.y)].fg, buf[(table.right() - 1, table.bottom() - 1)].fg);
         assert_eq!(border.0, THEMES[app.theme].accent);
         assert_eq!(border.1, THEMES[app.theme].link, "and the border ends at the link colour");
+    }
+
+    #[test]
+    fn a_modal_darkens_what_is_behind_it() {
+        let mut app = app();
+        app.theme = crate::theme::by_name("nord");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let at = |t: &Terminal<TestBackend>, x, y| t.backend().buffer()[(x, y)].clone();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (name, border) = (at(&terminal, 5, 5), at(&terminal, 1, 1));
+        press(&mut app, '?');
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (dim_name, dim_border) = (at(&terminal, 5, 5), at(&terminal, 1, 1));
+        assert_eq!(dim_name.symbol(), name.symbol(), "the backdrop keeps its text");
+        assert_ne!(dim_name.fg, name.fg, "but sinks towards the background");
+        assert_ne!(dim_border.fg, border.fg, "borders sink too: {:?}", dim_border.fg);
     }
 
     #[test]
