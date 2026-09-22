@@ -1,15 +1,8 @@
 # tuiman
 
-<!--toc:start-->
-- [tuiman](#tuiman)
-  - [Install](#install)
-    - [From source](#from-source)
-  - [Use](#use)
-  - [Catalog](#catalog)
-  - [License](#license)
-<!--toc:end-->
+A fast TUI manager with vim keybindings.
 
-A fast TUI manager.
+![tuiman searching, filtering and installing a TUI](https://github.com/user-attachments/assets/209bc505-40f1-4fe9-bdf7-c983b25834ea)
 
 tuiman browses the ~700 terminal applications curated in
 [awesome-tuis](https://github.com/rothgar/awesome-tuis), lets you search and
@@ -57,6 +50,8 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `/` | fuzzy search names and descriptions |
 | `h` `l` / `←` `→` | focus categories / list; `j` `k` / `↑` `↓` then move in that panel |
 | `(` `)` | half a page up / down, in any list |
+| `ctrl-d` `ctrl-u` | half a page down / up in the TUI list |
+| `gg` `G` / `3gg` | top / bottom, or row 3 (rows are numbered) |
 | `3j` | vim counts: a number before a move repeats it |
 | `tab` `shift-tab` | next / previous category |
 | `s` | cycle sort: stars, last push, name |
