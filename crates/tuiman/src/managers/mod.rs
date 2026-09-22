@@ -250,14 +250,17 @@ fn dir_entries(dir: &Path) -> Vec<String> {
     entries.filter_map(|e| e.file_name().into_string().ok()).filter(|name| !name.starts_with('.')).collect()
 }
 
-/// Installed formulae are the directories of `<prefix>/Cellar`; `brew` lives
-/// in `<prefix>/bin`. Reading the directory is ~1000x faster than `brew list`.
+/// Installed formulae and casks are the directories of `<prefix>/Cellar` and
+/// `<prefix>/Caskroom`; `brew` lives in `<prefix>/bin`. Reading them is ~1000x
+/// faster than `brew list`.
 fn list_brew(bin: &Path) -> Vec<String> {
     let prefix = env::var_os("HOMEBREW_PREFIX")
         .map(PathBuf::from)
         .or_else(|| Some(bin.parent()?.parent()?.to_owned()))
         .unwrap_or_default();
-    dir_entries(&prefix.join("Cellar"))
+    let mut names = dir_entries(&prefix.join("Cellar"));
+    names.extend(dir_entries(&prefix.join("Caskroom")));
+    names
 }
 
 fn list_cargo(_bin: &Path) -> Vec<String> {
