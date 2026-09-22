@@ -95,7 +95,7 @@ pub struct Help {
 pub const HELP: [(&str, &str); 23] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
-    ("g G", "first / last"),
+    ("gg G", "first / last, 3gg row 3"),
     ("1-9", "count for the next move, as in 3j"),
     ("ctrl-d ctrl-u", "half page down / up"),
     (") (", "half page down / up, in any list"),
@@ -188,6 +188,8 @@ pub struct App {
     quit_armed: bool,
     /// Digits typed so far, repeating the next motion as in vim's `3j`.
     pub count: usize,
+    /// The count before a first `g`, waiting for the second one of `gg`.
+    g_pending: Option<usize>,
     /// The last command key with its count, echoed like vim's showcmd.
     pub last_key: String,
     /// Ticks left to light up `last_key`'s hint in the status bar.
@@ -221,6 +223,7 @@ impl App {
             sidebar_visible: true,
             quit_armed: false,
             count: 0,
+            g_pending: None,
             last_key: String::new(),
             flash: 0,
         };
@@ -357,7 +360,8 @@ impl App {
             return vec![Effect::Quit];
         }
         let armed = std::mem::take(&mut self.quit_armed);
-        let count = std::mem::take(&mut self.count);
+        let mut count = std::mem::take(&mut self.count);
+        let g_pending = self.g_pending.take();
         // A leading 0 is not a count, as in vim.
         if let Some(digit) = match key.code {
             KeyCode::Char(c) if !ctrl && self.takes_count() => c.to_digit(10).filter(|&d| d > 0 || count > 0),
@@ -367,12 +371,24 @@ impl App {
             self.last_key.clear();
             return Vec::new();
         }
+        // `g` waits for a second one: `gg` goes to the top, `3gg` to row 3.
+        if key.code == KeyCode::Char('g') && !ctrl && self.takes_count() {
+            match g_pending {
+                Some(pending) => count = pending,
+                None => {
+                    self.g_pending = Some(count);
+                    self.last_key = format!("{}g", if count > 0 { count.to_string() } else { String::new() });
+                    return Vec::new();
+                }
+            }
+        }
         // Text typed into a search box is already on screen, so only commands are echoed.
         self.last_key = match self.takes_count() {
             true => format!(
-                "{}{}{}",
+                "{}{}{}{}",
                 if count > 0 { count.to_string() } else { String::new() },
                 if ctrl { "^" } else { "" },
+                if g_pending.is_some() { "g" } else { "" },
                 key.code
             ),
             false => String::new(),
@@ -422,6 +438,15 @@ impl App {
                 KeyCode::Char('k') | KeyCode::Up => -n,
                 KeyCode::Char(')') => n * half_page,
                 KeyCode::Char('(') => -n * half_page,
+                // Row 1 is All, so 3gg lands on the second category.
+                // Returns rather than steps, as already being there is a step of 0.
+                KeyCode::Char('g') if count > 0 => {
+                    self.step_category(
+                        count as isize - 1 - self.query.category.map_or(0, |c| c as isize + 1),
+                        false,
+                    );
+                    return Vec::new();
+                }
                 KeyCode::Char('g') | KeyCode::Home => -categories,
                 KeyCode::Char('G') | KeyCode::End => categories,
                 KeyCode::Enter => {
@@ -455,6 +480,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_by(-n),
             KeyCode::PageDown => self.move_by(n * self.page as isize),
             KeyCode::PageUp => self.move_by(-n * self.page as isize),
+            KeyCode::Char('g') if count > 0 => self.move_by(count as isize - 1 - self.selected as isize),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(isize::MIN),
             KeyCode::Char('G') | KeyCode::End => self.move_by(isize::MAX),
             KeyCode::Char('h') | KeyCode::Left => self.sidebar_focused = self.sidebar_visible,
@@ -816,7 +842,7 @@ fn list_motion(
         KeyCode::Char('k') => selected.saturating_sub(n),
         KeyCode::Char(')') => selected + n * half_page,
         KeyCode::Char('(') => selected.saturating_sub(n * half_page),
-        KeyCode::Char('g') => 0,
+        KeyCode::Char('g') => count.saturating_sub(1),
         KeyCode::Char('G') => last,
         _ => return None,
     };
@@ -874,7 +900,7 @@ mod tests {
         assert_eq!((app.selected, app.offset), (4, 3));
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.selected, 4);
-        press(&mut app, KeyCode::Char('g'));
+        type_text(&mut app, "gg");
         assert_eq!((app.selected, app.offset), (0, 0));
 
         press(&mut app, KeyCode::Char('G'));
@@ -898,7 +924,9 @@ mod tests {
         assert_eq!(app.selected, 2, "( goes up half a page");
         type_text(&mut app, ")");
         assert_eq!(app.selected, 4);
-        type_text(&mut app, "g0j");
+        type_text(&mut app, "3gg");
+        assert_eq!(app.selected, 2, "3gg goes to row 3");
+        type_text(&mut app, "gg0j");
         assert_eq!(app.selected, 1, "a leading 0 is not a count");
     }
 
@@ -926,6 +954,10 @@ mod tests {
         assert_eq!(app.theme, THEMES.len() / 2, "the theme previews as it moves");
         type_text(&mut app, "3k");
         assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == THEMES.len() / 2 - 3));
+        type_text(&mut app, "3g");
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == THEMES.len() / 2 - 3), "one g waits");
+        type_text(&mut app, "g");
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == 2), "3gg goes to the third theme");
         press(&mut app, KeyCode::Esc);
 
         press(&mut app, KeyCode::Char('?'));
@@ -990,6 +1022,17 @@ mod tests {
         assert_eq!(app.query.category, Some(2), ") moves half a page of categories");
         press(&mut app, KeyCode::Char('('));
         assert_eq!(app.query.category, Some(0));
+        type_text(&mut app, "3gg");
+        assert_eq!(app.query.category, Some(1), "3gg goes to the third row, All being the first");
+        let selected = app.selected;
+        type_text(&mut app, "3gg");
+        assert_eq!(
+            (app.query.category, app.selected),
+            (Some(1), selected),
+            "3gg on row 3 leaves the list alone"
+        );
+        type_text(&mut app, "gg");
+        assert_eq!(app.query.category, None);
         press(&mut app, KeyCode::Right);
         app.set_layout(20, true);
 
@@ -1071,8 +1114,8 @@ mod tests {
         assert_eq!(picker.items.len(), THEMES.len());
         press(&mut app, KeyCode::Char('G'));
         assert_eq!(app.theme, THEMES.len() - 1, "G previews the last theme");
-        press(&mut app, KeyCode::Char('g'));
-        assert_eq!(app.theme, 0, "g previews the first theme");
+        type_text(&mut app, "gg");
+        assert_eq!(app.theme, 0, "gg previews the first theme");
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "g");
         let Mode::Picker(picker) = &app.mode else { panic!("g closed the picker") };

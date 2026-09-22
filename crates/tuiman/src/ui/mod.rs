@@ -135,6 +135,7 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
 
 /// Column x-offsets and widths for a given inner table width.
 struct Columns {
+    number: Option<(u16, u16)>,
     name: (u16, u16),
     stars: (u16, u16),
     language: Option<(u16, u16)>,
@@ -143,7 +144,8 @@ struct Columns {
 }
 
 impl Columns {
-    fn new(width: u16) -> Columns {
+    /// `rows` sizes the line number column to the largest number.
+    fn new(width: u16, rows: usize) -> Columns {
         let wide = width >= 72;
         let name_w = if wide { 24 } else { 18 }.min(width.saturating_sub(10));
         let mut x = 2;
@@ -152,12 +154,13 @@ impl Columns {
             x += w + 1;
             col
         };
+        let number = wide.then(|| next(rows.to_string().len() as u16));
         let name = next(name_w);
         let stars = next(6);
         let language = wide.then(|| next(11));
         let age = wide.then(|| next(6));
         let desc = (x, width.saturating_sub(x));
-        Columns { name, stars, language, age, desc }
+        Columns { number, name, stars, language, age, desc }
     }
 }
 
@@ -176,7 +179,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
 
-    let cols = Columns::new(inner.width);
+    let cols = Columns::new(inner.width, app.view.rows.len());
     // The sorted column's header is the one bright thing in the header row.
     let header = |label: &str, sort: Sort| match sort == app.query.sort {
         true => (format!("{label} ▾"), t.accent().patch(BOLD)),
@@ -225,6 +228,10 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             put(buf, y, (0, 1), "⋯", t.accent());
         } else if app.installed.is_installed(row) {
             put(buf, y, (0, 1), "✓", Style::new().fg(t.installed));
+        }
+        // Numbered from 1, so the number is what 3gg takes.
+        if let Some(number) = cols.number {
+            put_right(buf, y, number, &(i + 1).to_string(), t.dim());
         }
         put(buf, y, cols.name, cat.name(row), text.patch(BOLD));
         put_right(
@@ -497,6 +504,11 @@ mod tests {
         assert!(screen[0].contains("Categories") && screen[0].contains("5/6 · sort:stars"), "{}", screen[0]);
         assert!(screen[1].contains("NAME") && screen[1].contains("★ ▾") && screen[1].contains("LANGUAGE"));
         assert!(screen[2].contains("lazygit") && screen[2].contains("50k") && screen[2].contains("Go"));
+        assert!(
+            screen[2].contains(" 1 lazygit") && screen[3].contains(" 2 btop"),
+            "line numbers: {}",
+            screen[3]
+        );
         assert!(screen[3].contains("✓") && screen[3].contains("btop"), "installed mark: {}", screen[3]);
         assert!(all.contains("https://github.com/o/lazygit") && all.contains("brew:lazygit"));
         assert!(all.contains("Dashboards") && all.contains("/ search"));
