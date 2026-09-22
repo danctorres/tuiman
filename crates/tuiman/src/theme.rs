@@ -40,6 +40,15 @@ impl Theme {
         }
     }
 
+    /// The faint bar behind a category's count. `None` where a theme on the
+    /// terminal palette cannot blend, and so goes without.
+    pub fn meter(&self) -> Option<Style> {
+        match mix(self.bg, self.accent, 0.18) {
+            Color::Rgb(r, g, b) => Some(Style::new().bg(Color::Rgb(r, g, b))),
+            _ => None,
+        }
+    }
+
     /// `colour` sunk most of the way towards the background, for the backdrop
     /// behind a modal. `None` when either end is not 24-bit and cannot blend.
     pub fn sink(&self, colour: Color) -> Option<Color> {

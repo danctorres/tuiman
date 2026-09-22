@@ -116,6 +116,10 @@ GitHub and the package registries. tuiman checks for a new one at most every
 six hours and otherwise starts from its cache, so it works offline and makes no
 API calls while you browse. Press `r` to refresh now.
 
+If your terminal uses a Nerd Font, set `TUIMAN_NERD_FONT=1` for icons beside
+each category and language and sharper separators in the bottom bar. Without
+that font the icons show up as empty boxes, so it stays off by default.
+
 The cache lives in `~/.cache/tuiman` (`~/Library/Caches/tuiman` on macOS);
 set `TUIMAN_CACHE_DIR` to move it.
 
