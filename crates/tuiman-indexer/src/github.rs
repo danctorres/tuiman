@@ -36,14 +36,39 @@ pub fn enrich(http: &Http, token: &str, items: &mut [Item]) -> Result<Vec<usize>
         let Some(data) = response.get("data").filter(|d| d.is_object()) else {
             return Err(format!("github: no data in response: {}", response["errors"]).into());
         };
+        let errors = response["errors"].as_array().map(Vec::as_slice).unwrap_or_default();
         for (alias, &i) in batch.iter().enumerate() {
-            match data.get(format!("r{alias}")) {
+            let alias = format!("r{alias}");
+            match data.get(&alias) {
                 Some(repo) if repo.is_object() => apply(&mut items[i], repo),
-                _ => dead.push(i),
+                _ if not_found(errors, &alias) => dead.push(i),
+                // Any other per-repository error is transient. Dropping the
+                // entry would publish a smaller catalog; keeping it without
+                // metadata is what a run with no token does anyway.
+                _ => eprintln!(
+                    "warn: github: {}: kept without metadata: {}",
+                    items[i].name,
+                    why(errors, &alias)
+                ),
             }
         }
     }
     Ok(dead)
+}
+
+/// GraphQL reports a missing repository as a null alias plus an error at that path.
+fn not_found(errors: &[Value], alias: &str) -> bool {
+    errors.iter().any(|e| e["type"] == "NOT_FOUND" && e["path"][0] == alias)
+}
+
+fn why(errors: &[Value], alias: &str) -> String {
+    let messages: Vec<&str> =
+        errors.iter().filter(|e| e["path"][0] == alias).filter_map(|e| e["message"].as_str()).collect();
+    if messages.is_empty() {
+        "no error reported".to_owned()
+    } else {
+        messages.join("; ")
+    }
 }
 
 /// `repos` are `owner/name` keys already restricted to `[a-z0-9._-]` by
@@ -122,6 +147,18 @@ mod tests {
         assert_eq!((item.language.as_str(), item.license.as_str()), ("Rust", "MIT"));
         assert!(item.manifests.cargo_toml.is_some() && item.manifests.go_mod.is_none());
         assert!(!item.manifests.has_root_main_go && item.manifests.has_rust_bin);
+    }
+
+    #[test]
+    fn only_not_found_errors_mean_a_dead_repository() {
+        let errors = [
+            json!({ "type": "NOT_FOUND", "path": ["r1"], "message": "Could not resolve" }),
+            json!({ "path": ["r2"], "message": "timeout" }),
+        ];
+        assert!(not_found(&errors, "r1"));
+        assert!(!not_found(&errors, "r2") && !not_found(&errors, "r3"));
+        assert_eq!(why(&errors, "r2"), "timeout");
+        assert_eq!(why(&errors, "r3"), "no error reported");
     }
 
     #[test]
