@@ -88,6 +88,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `*` `L` | minimum stars, language |
 | `i` `a` `A` | installed only, installable here only, show archived |
 | `enter` | install, or uninstall if installed (always shows the exact command first) |
+| `u` | upgrade an installed TUI to its latest version |
 | `o` | open the project page |
 | `y` | copy the selected item: name, category, theme, help line or job output |
 | `v` | view job output |
@@ -104,6 +105,7 @@ tuiman list --installed
 tuiman install lazygit            # picks the first available manager
 tuiman install lazygit --via go
 tuiman uninstall lazygit
+tuiman upgrade lazygit
 tuiman managers                   # which package managers were found
 ```
 

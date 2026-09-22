@@ -92,7 +92,7 @@ pub struct Help {
     pub selected: usize,
 }
 
-pub const HELP: [(&str, &str); 23] = [
+pub const HELP: [(&str, &str); 24] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
     ("gg G", "first / last, 3gg row 3"),
@@ -108,6 +108,7 @@ pub const HELP: [(&str, &str); 23] = [
     ("a", "installable on this machine only"),
     ("A", "show archived projects"),
     ("enter", "install, or uninstall if installed"),
+    ("u", "upgrade an installed TUI"),
     ("o", "open the project page"),
     ("y", "copy the selected item"),
     ("r", "refresh the index"),
@@ -526,6 +527,7 @@ impl App {
                 true => self.open_confirm(Action::Uninstall),
                 false => self.open_confirm(Action::Install),
             },
+            KeyCode::Char('u') => self.open_confirm(Action::Upgrade),
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_row() {
                     return vec![Effect::OpenUrl(self.catalog.url(row).to_owned())];
@@ -698,7 +700,12 @@ impl App {
         }
         let items =
             choices.iter().map(|c| MANAGERS[c.manager as usize].argv(action, &c.package).join(" ")).collect();
-        let title = format!("{} {name}?", if action == Action::Install { "Install" } else { "Uninstall" });
+        let verb = match action {
+            Action::Install => "Install",
+            Action::Uninstall => "Uninstall",
+            Action::Upgrade => "Upgrade",
+        };
+        let title = format!("{verb} {name}?");
         let kind = PickerKind::Confirm { action, row, choices };
         self.mode = Mode::Picker(Picker { title, items, selected: 0, kind });
     }
@@ -1280,6 +1287,21 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         let Mode::Picker(picker) = &app.mode else { panic!("no confirm") };
         assert_eq!(picker.items, ["brew uninstall lazygit"]);
+    }
+
+    #[test]
+    fn upgrade_offers_the_installing_manager_only() {
+        let mut app = app(&["brew", "go"]);
+        assert!(press(&mut app, KeyCode::Char('u')).is_empty());
+        assert!(app.status.contains("not installed"), "{}", app.status);
+
+        app.update(Event::Listing(by_name("go").unwrap(), vec!["lazygit".into()]));
+        press(&mut app, KeyCode::Char('u'));
+        let Mode::Picker(picker) = &app.mode else { panic!("no confirm") };
+        assert_eq!(picker.title, "Upgrade lazygit?");
+        assert_eq!(picker.items, ["go install github.com/jesseduffield/lazygit@latest"]);
+        let effects = press(&mut app, KeyCode::Enter);
+        assert!(matches!(&effects[..], [Effect::Spawn(job)] if job.action == Action::Upgrade));
     }
 
     #[test]

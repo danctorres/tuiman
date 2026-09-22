@@ -21,6 +21,7 @@ usage:
   tuiman list [FILTERS] [TEXT]        list TUIs, optionally fuzzy-matching TEXT
   tuiman install NAME [--via MANAGER] install a TUI
   tuiman uninstall NAME [--via MANAGER]
+  tuiman upgrade NAME [--via MANAGER]   upgrade an installed TUI
   tuiman refresh                      download the latest index
   tuiman managers                     show the package managers tuiman found
 
@@ -51,6 +52,7 @@ pub fn run(args: &[String]) -> CliResult {
         "list" | "ls" | "search" => list(rest),
         "install" | "i" => change(Action::Install, rest),
         "uninstall" | "remove" | "rm" => change(Action::Uninstall, rest),
+        "upgrade" | "up" => change(Action::Upgrade, rest),
         "refresh" | "update" => refresh(),
         "managers" => {
             for (id, bin) in managers::detect() {

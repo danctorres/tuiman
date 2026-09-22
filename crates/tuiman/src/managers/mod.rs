@@ -30,6 +30,8 @@ pub struct Manager {
     /// Argument templates; `{pkg}` is replaced by the package name.
     install: &'static [&'static str],
     uninstall: &'static [&'static str],
+    /// Brings an installed package to its latest version.
+    upgrade: &'static [&'static str],
     /// Prefix with `sudo` when not already root.
     pub sudo: bool,
     /// Needs a real terminal (password or confirmation prompts), so the TUI
@@ -46,6 +48,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Brew,
         install: &["install", "{pkg}"],
         uninstall: &["uninstall", "{pkg}"],
+        upgrade: &["upgrade", "{pkg}"],
         sudo: false,
         tty: false,
         list_installed: list_brew,
@@ -56,6 +59,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Crates,
         install: &["install", "--locked", "{pkg}"],
         uninstall: &["uninstall", "{pkg}"],
+        upgrade: &["install", "--locked", "{pkg}"],
         sudo: false,
         tty: false,
         list_installed: list_cargo,
@@ -66,6 +70,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Go,
         install: &["install", "{pkg}@latest"],
         uninstall: &[], // Go has no uninstall; see `Manager::argv`.
+        upgrade: &["install", "{pkg}@latest"],
         sudo: false,
         tty: false,
         list_installed: list_go,
@@ -76,6 +81,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Npm,
         install: &["install", "--global", "{pkg}"],
         uninstall: &["uninstall", "--global", "{pkg}"],
+        upgrade: &["install", "--global", "{pkg}@latest"],
         sudo: false,
         tty: false,
         list_installed: list_npm,
@@ -86,6 +92,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Pypi,
         install: &["tool", "install", "{pkg}"],
         uninstall: &["tool", "uninstall", "{pkg}"],
+        upgrade: &["tool", "upgrade", "{pkg}"],
         sudo: false,
         tty: false,
         list_installed: list_uv,
@@ -96,6 +103,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Pypi,
         install: &["install", "{pkg}"],
         uninstall: &["uninstall", "{pkg}"],
+        upgrade: &["upgrade", "{pkg}"],
         sudo: false,
         tty: false,
         list_installed: list_pipx,
@@ -106,6 +114,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Apt,
         install: &["install", "{pkg}"],
         uninstall: &["remove", "{pkg}"],
+        upgrade: &["install", "--only-upgrade", "{pkg}"],
         sudo: true,
         tty: true,
         list_installed: |_| {
@@ -118,6 +127,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Dnf,
         install: &["install", "{pkg}"],
         uninstall: &["remove", "{pkg}"],
+        upgrade: &["upgrade", "{pkg}"],
         sudo: true,
         tty: true,
         list_installed: |_| parse::lines(&run(Path::new("rpm"), &["-qa", "--qf", "%{NAME}\\n"])),
@@ -128,6 +138,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Pacman,
         install: &["-S", "{pkg}"],
         uninstall: &["-Rs", "{pkg}"],
+        upgrade: &["-S", "--needed", "{pkg}"],
         sudo: true,
         tty: true,
         list_installed: |bin| parse::lines(&run(bin, &["-Qqn"])),
@@ -138,6 +149,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Aur,
         install: &["-S", "{pkg}"],
         uninstall: &["-Rs", "{pkg}"],
+        upgrade: &["-S", "--needed", "{pkg}"],
         sudo: false,
         tty: true,
         list_installed: |_| parse::lines(&run(Path::new("pacman"), &["-Qqm"])),
@@ -148,6 +160,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Aur,
         install: &["-S", "{pkg}"],
         uninstall: &["-Rs", "{pkg}"],
+        upgrade: &["-S", "--needed", "{pkg}"],
         sudo: false,
         tty: true,
         list_installed: |_| parse::lines(&run(Path::new("pacman"), &["-Qqm"])),
@@ -158,6 +171,7 @@ pub const MANAGERS: [Manager; 12] = [
         eco: Ecosystem::Nix,
         install: &["--install", "--attr", "nixpkgs.{pkg}"],
         uninstall: &["--uninstall", "{pkg}"],
+        upgrade: &["--upgrade", "{pkg}"],
         sudo: false,
         tty: false,
         list_installed: |bin| parse::nix_env_query(&run(bin, &["--query"])),
@@ -168,6 +182,7 @@ pub const MANAGERS: [Manager; 12] = [
 pub enum Action {
     Install,
     Uninstall,
+    Upgrade,
 }
 
 impl Action {
@@ -175,6 +190,7 @@ impl Action {
         match self {
             Action::Install => "install",
             Action::Uninstall => "uninstall",
+            Action::Upgrade => "upgrade",
         }
     }
 }
@@ -213,6 +229,7 @@ impl Manager {
         let template = match action {
             Action::Install => self.install,
             Action::Uninstall => self.uninstall,
+            Action::Upgrade => self.upgrade,
         };
         let mut argv = Vec::with_capacity(template.len() + 2);
         if self.sudo && !is_root() {
@@ -347,6 +364,7 @@ mod tests {
             manager("nix").argv(Action::Install, "btop"),
             ["nix-env", "--install", "--attr", "nixpkgs.btop"]
         );
+        assert_eq!(manager("uv").argv(Action::Upgrade, "posting"), ["uv", "tool", "upgrade", "posting"]);
         let go = manager("go").argv(Action::Install, "github.com/jesseduffield/lazygit");
         assert_eq!(go, ["go", "install", "github.com/jesseduffield/lazygit@latest"]);
     }
