@@ -66,7 +66,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `o` | open the project page |
 | `y` | copy the selected item: name, category, theme, help line or job output |
 | `v` | view job output |
-| `t` | pick a colour theme, `/` searches (default, gruvbox, nord, catppuccin, tokyonight, dracula, solarized-light, rose-pine, kanagawa, everforest, monokai, synthwave, paper, bubblegum, gameboy, phosphor, amber, high-contrast) |
+| `t` | pick a colour theme, `/` searches (default, catppuccin, dracula, everforest, github, gruvbox, kanagawa, monokai, nord, rose-pine, solarized-dark, synthwave, tokyonight, bubblegum, catppuccin-latte, github-light, gruvbox-light, paper, sepia, solarized-light, amber, c64, cga, gameboy, phosphor, high-contrast) |
 | `?` | key help (`/` searches it) |
 | `r` | refresh the index |
 | `c` | clear filters |
