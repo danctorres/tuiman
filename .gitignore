@@ -22,3 +22,6 @@ target
 
 # tuiman-indexer output
 /dist
+
+# vhs output, hosted on GitHub instead (see docs/demo.tape)
+/docs/demo.gif
