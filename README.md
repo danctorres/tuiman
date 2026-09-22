@@ -3,6 +3,7 @@
 <!--toc:start-->
 - [tuiman](#tuiman)
   - [Install](#install)
+    - [From source](#from-source)
   - [Use](#use)
   - [Catalog](#catalog)
   - [License](#license)
@@ -22,6 +23,30 @@ cargo install --git https://github.com/danctorres/tuiman tuiman
 ```
 
 Linux and macOS. Requires Rust 1.85+.
+
+### From source
+
+```sh
+git clone https://github.com/danctorres/tuiman
+cd tuiman
+cargo build --release -p tuiman   # binary at target/release/tuiman
+cargo install --path crates/tuiman  # or put it on your PATH
+```
+
+Before sending a change, run what CI runs:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+To rebuild the index locally (optional; the app downloads it), set
+`GITHUB_TOKEN` and run:
+
+```sh
+cargo run --profile indexer -p tuiman-indexer -- --out dist
+```
 
 ## Use
 
