@@ -12,13 +12,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, BorderType, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use tuiman_index::Row;
 
 use crate::app::{App, Mode};
 use crate::managers::MANAGERS;
 use crate::query::Sort;
+use crate::theme::Theme;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -46,9 +47,11 @@ pub fn areas(area: Rect) -> Areas {
     }
 }
 
-/// Number of table body lines for a terminal of this size (borders + header).
-pub fn page(area: Rect) -> usize {
-    areas(area).table.height.saturating_sub(3) as usize
+/// What the app needs to know about a terminal of this size: the number of
+/// table body lines (borders and header excluded) and whether the sidebar fits.
+pub fn layout(area: Rect) -> (usize, bool) {
+    let areas = areas(area);
+    (areas.table.height.saturating_sub(3) as usize, !areas.sidebar.is_empty())
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -74,19 +77,31 @@ pub fn draw(frame: &mut Frame, app: &App) {
             }
         }
         Mode::Log => overlay::log(buf, area, app),
-        Mode::Normal | Mode::Search => {}
+        Mode::Normal | Mode::Search | Mode::CategorySearch { .. } => {}
     }
-    if app.mode == Mode::Search {
+    let typing = match &app.mode {
+        Mode::Search => Some((areas.table, app.query.text.as_str())),
+        Mode::CategorySearch { text, .. } if !areas.sidebar.is_empty() => {
+            Some((areas.sidebar, text.as_str()))
+        }
+        _ => None,
+    };
+    if let Some((rect, text)) = typing {
         // Title starts after the corner and " /".
-        let x = areas.table.x + 3 + app.query.text.chars().count() as u16;
-        frame.set_cursor_position((x.min(areas.table.right().saturating_sub(2)), areas.table.y));
+        let x = rect.x + 3 + text.chars().count() as u16;
+        frame.set_cursor_position((x.min(rect.right().saturating_sub(2)), rect.y));
     }
 }
 
 fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
-    let border = if app.sidebar_focused { t.accent() } else { t.dim() };
-    let block = Block::bordered().border_style(border).title(" Categories ");
+    let title = match &app.mode {
+        Mode::CategorySearch { text, .. } => {
+            Line::from(vec![" /".into(), Span::styled(text.as_str(), BOLD), " ".into()])
+        }
+        _ => Line::from(" Categories "),
+    };
+    let block = panel(t, app.sidebar_focused).title(title);
     let inner = block.inner(area);
     block.render(area, buf);
 
@@ -101,7 +116,7 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     );
     for ((id, name, count), y) in entries.zip(inner.y..inner.bottom()) {
         let style = match (id == app.query.category, count) {
-            (true, _) => t.selected(),
+            (true, _) => cursor(t, app.sidebar_focused),
             (false, 0) => t.dim(),
             (false, _) => Style::new(),
         };
@@ -150,9 +165,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         }
         _ => Line::from(" tuiman "),
     };
-    let border = if app.sidebar_focused { t.dim() } else { t.accent() };
-    let block =
-        Block::bordered().border_style(border).title_top(title).title_top(filters(app).right_aligned());
+    let block = panel(t, !app.sidebar_focused).title_top(title).title_top(filters(app).right_aligned());
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height < 2 || inner.width < 12 {
@@ -219,8 +232,28 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         }
         put(buf, y, cols.desc, cat.desc(row), text);
         if selected {
-            buf.set_style(Rect::new(inner.x, y, inner.width, 1), t.selected());
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), cursor(t, !app.sidebar_focused));
         }
+    }
+}
+
+/// A focusable panel: thick accent border with a bold title when focused, thin and dim otherwise.
+fn panel(t: &Theme, focused: bool) -> Block<'static> {
+    match focused {
+        true => Block::bordered()
+            .border_type(BorderType::Thick)
+            .border_style(t.accent())
+            .title_style(t.accent().patch(BOLD)),
+        false => Block::bordered().border_style(t.dim()).title_style(t.dim()),
+    }
+}
+
+/// The selection bar: full accent in the focused panel, a muted bar in the other.
+fn cursor(t: &Theme, focused: bool) -> Style {
+    match focused {
+        true => t.selected(),
+        // Forces the fg too, so dim cells stay readable on the dim bar.
+        false => t.selected().bg(t.dim),
     }
 }
 
@@ -231,6 +264,10 @@ fn filters(app: &App) -> Line<'static> {
         vec![format!("{}/{}", app.view.rows.len(), app.catalog.len()), format!("sort:{}", q.sort.label())];
     if q.min_stars > 0 {
         parts.push(format!("★≥{}", q.min_stars));
+    }
+    // Tab still steps categories without the sidebar, so say where it went.
+    if let (Some(id), false) = (q.category, app.sidebar_visible) {
+        parts.push(format!("cat:{}", app.catalog.category_name(id)));
     }
     if let Some(id) = q.language {
         parts.push(format!("lang:{}", app.catalog.language_name(id)));
@@ -354,7 +391,8 @@ mod tests {
 
     fn render(app: &mut App, width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        app.set_page(page(Rect::new(0, 0, width, height)));
+        let (page, sidebar) = layout(Rect::new(0, 0, width, height));
+        app.set_layout(page, sidebar);
         terminal.draw(|frame| draw(frame, app)).unwrap();
         let buf = terminal.backend().buffer();
         (0..height).map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect()).collect()
@@ -385,6 +423,9 @@ mod tests {
         let all = screen.join("\n");
         assert!(!all.contains("Categories") && !all.contains("LANGUAGE"));
         assert!(all.contains("lazygit") && all.contains("DESCRIPTION"));
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        let screen = render(&mut app, 60, 12);
+        assert!(screen[0].contains("cat:Dashboards"), "{}", screen[0]);
     }
 
     #[test]
