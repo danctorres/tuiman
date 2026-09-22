@@ -56,18 +56,20 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | --- | --- |
 | `/` | fuzzy search names and descriptions |
 | `h` `l` / `←` `→` | focus categories / list; `j` `k` / `↑` `↓` then move in that panel |
+| `(` `)` | half a page up / down, in any list |
+| `3j` | vim counts: a number before a move repeats it |
 | `tab` `shift-tab` | next / previous category |
 | `s` | cycle sort: stars, last push, name |
 | `*` `L` | minimum stars, language |
 | `i` `a` `A` | installed only, installable here only, show archived |
-| `c` | clear filters |
 | `enter` | install, or uninstall if installed (always shows the exact command first) |
 | `o` | open the project page |
 | `y` | copy the name |
 | `v` | view job output |
-| `t` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
+| `t` | pick a colour theme, `/` searches (default, gruvbox, nord, catppuccin, tokyonight, dracula, solarized-light, rose-pine, kanagawa, everforest, monokai, synthwave, paper, bubblegum, gameboy, phosphor, amber, high-contrast) |
 | `?` | key help (`/` searches it) |
 | `r` | refresh the index |
+| `c` | clear filters |
 
 The same core is scriptable:
 

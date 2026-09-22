@@ -90,11 +90,13 @@ pub struct Help {
     pub selected: usize,
 }
 
-pub const HELP: [(&str, &str); 21] = [
+pub const HELP: [(&str, &str); 23] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
     ("g G", "first / last"),
+    ("1-9", "count for the next move, as in 3j"),
     ("ctrl-d ctrl-u", "half page down / up"),
+    (") (", "half page down / up, in any list"),
     ("tab shift-tab", "next / previous category"),
     ("/", "fuzzy search, or find a category in the sidebar"),
     ("s", "cycle sort: stars, last push, name"),
@@ -103,7 +105,6 @@ pub const HELP: [(&str, &str); 21] = [
     ("i", "installed only"),
     ("a", "installable on this machine only"),
     ("A", "show archived projects"),
-    ("c", "clear all filters"),
     ("enter", "install, or uninstall if installed"),
     ("o", "open the project page"),
     ("y", "copy the name"),
@@ -112,6 +113,7 @@ pub const HELP: [(&str, &str); 21] = [
     ("t", "colour theme"),
     ("?", "this help"),
     ("q", "quit"),
+    ("c", "clear all filters"),
 ];
 
 impl Help {
@@ -141,9 +143,12 @@ pub enum PickerKind {
     MinStars,
     /// Language ids parallel to `items`; `None` is "any".
     Language(Vec<Option<u16>>),
-    /// Items are [`THEMES`]; moving previews, `original` is restored on cancel.
+    /// Moving previews, `original` is restored on cancel. `ids` index
+    /// [`THEMES`] parallel to `items`, narrowed by `filter` once `/` opened it.
     Theme {
         original: usize,
+        filter: Option<String>,
+        ids: Vec<usize>,
     },
 }
 
@@ -179,6 +184,8 @@ pub struct App {
     /// The layout has room for the sidebar; reported by the shell.
     pub sidebar_visible: bool,
     quit_armed: bool,
+    /// Digits typed so far, repeating the next motion as in vim's `3j`.
+    pub count: usize,
 }
 
 impl App {
@@ -207,6 +214,7 @@ impl App {
             sidebar_focused: false,
             sidebar_visible: true,
             quit_armed: false,
+            count: 0,
         };
         app.refilter(false);
         app
@@ -334,8 +342,17 @@ impl App {
             return vec![Effect::Quit];
         }
         let armed = std::mem::take(&mut self.quit_armed);
+        let count = std::mem::take(&mut self.count);
+        // A leading 0 is not a count, as in vim.
+        if let Some(digit) = match key.code {
+            KeyCode::Char(c) if !ctrl && self.takes_count() => c.to_digit(10).filter(|&d| d > 0 || count > 0),
+            _ => None,
+        } {
+            self.count = (count * 10 + digit as usize).min(99_999);
+            return Vec::new();
+        }
         match self.mode {
-            Mode::Normal => self.on_normal_key(key.code, ctrl, armed),
+            Mode::Normal => self.on_normal_key(key.code, ctrl, armed, count),
             Mode::Search => {
                 self.on_search_key(key.code, ctrl);
                 Vec::new()
@@ -344,9 +361,9 @@ impl App {
                 self.on_category_search_key(key.code, ctrl);
                 Vec::new()
             }
-            Mode::Picker(_) => self.on_picker_key(key.code),
+            Mode::Picker(_) => self.on_picker_key(key.code, ctrl, count),
             Mode::Help(_) => {
-                self.on_help_key(key.code, ctrl);
+                self.on_help_key(key.code, ctrl, count);
                 Vec::new()
             }
             Mode::Log => {
@@ -356,16 +373,30 @@ impl App {
         }
     }
 
-    fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, quit_armed: bool) -> Vec<Effect> {
+    /// Digits are a count wherever they are not being typed into a search.
+    fn takes_count(&self) -> bool {
+        match &self.mode {
+            Mode::Normal => true,
+            Mode::Help(help) => help.filter.is_none(),
+            Mode::Picker(Picker { kind: PickerKind::Theme { filter, .. }, .. }) => filter.is_none(),
+            Mode::Picker(_) => true,
+            _ => false,
+        }
+    }
+
+    fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, quit_armed: bool, count: usize) -> Vec<Effect> {
         self.status.clear();
+        let n = count.max(1) as isize;
         let half_page = (self.page / 2).max(1) as isize;
         if self.sidebar_focused {
-            let count = self.catalog.category_count() as isize + 1;
+            let categories = self.catalog.category_count() as isize + 1;
             let step = match code {
-                KeyCode::Char('j') | KeyCode::Down => 1,
-                KeyCode::Char('k') | KeyCode::Up => -1,
-                KeyCode::Char('g') | KeyCode::Home => -count,
-                KeyCode::Char('G') | KeyCode::End => count,
+                KeyCode::Char('j') | KeyCode::Down => n,
+                KeyCode::Char('k') | KeyCode::Up => -n,
+                KeyCode::Char(')') => n * half_page,
+                KeyCode::Char('(') => -n * half_page,
+                KeyCode::Char('g') | KeyCode::Home => -categories,
+                KeyCode::Char('G') | KeyCode::End => categories,
                 KeyCode::Enter => {
                     self.sidebar_focused = false;
                     return Vec::new();
@@ -389,12 +420,14 @@ impl App {
                 self.quit_armed = true;
                 self.status = "A job is still running (press q again to quit anyway)".into();
             }
-            KeyCode::Char('d') if ctrl => self.move_by(half_page),
-            KeyCode::Char('u') if ctrl => self.move_by(-half_page),
-            KeyCode::Char('j') | KeyCode::Down => self.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_by(-1),
-            KeyCode::PageDown => self.move_by(self.page as isize),
-            KeyCode::PageUp => self.move_by(-(self.page as isize)),
+            KeyCode::Char(')') => self.move_by(n * half_page),
+            KeyCode::Char('(') => self.move_by(-n * half_page),
+            KeyCode::Char('d') if ctrl => self.move_by(n * half_page),
+            KeyCode::Char('u') if ctrl => self.move_by(-n * half_page),
+            KeyCode::Char('j') | KeyCode::Down => self.move_by(n),
+            KeyCode::Char('k') | KeyCode::Up => self.move_by(-n),
+            KeyCode::PageDown => self.move_by(n * self.page as isize),
+            KeyCode::PageUp => self.move_by(-n * self.page as isize),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(isize::MIN),
             KeyCode::Char('G') | KeyCode::End => self.move_by(isize::MAX),
             KeyCode::Char('h') | KeyCode::Left => self.sidebar_focused = self.sidebar_visible,
@@ -452,14 +485,7 @@ impl App {
                 return vec![Effect::RefreshIndex];
             }
             KeyCode::Char('v') => self.mode = Mode::Log,
-            KeyCode::Char('t') => {
-                self.mode = Mode::Picker(Picker {
-                    title: "Theme".into(),
-                    items: THEMES.iter().map(|t| t.name.to_owned()).collect(),
-                    selected: self.theme,
-                    kind: PickerKind::Theme { original: self.theme },
-                });
-            }
+            KeyCode::Char('t') => self.mode = Mode::Picker(self.theme_picker(self.theme, None)),
             KeyCode::Char('?') => self.mode = Mode::Help(Help::default()),
             _ => {}
         }
@@ -467,14 +493,15 @@ impl App {
     }
 
     /// Arrows always move; typing edits the filter once `/` opened it.
-    fn on_help_key(&mut self, code: KeyCode, ctrl: bool) {
+    fn on_help_key(&mut self, code: KeyCode, ctrl: bool, count: usize) {
+        let page = self.page;
         let Mode::Help(help) = &mut self.mode else { return };
-        let last = help.rows().count().saturating_sub(1);
+        let len = help.rows().count();
+        if let Some(to) = list_motion(code, help.filter.is_some(), help.selected, len, page, count) {
+            help.selected = to;
+            return;
+        }
         match (code, &mut help.filter) {
-            (KeyCode::Down, _) | (KeyCode::Char('j'), None) => help.selected = (help.selected + 1).min(last),
-            (KeyCode::Up, _) | (KeyCode::Char('k'), None) => help.selected = help.selected.saturating_sub(1),
-            (KeyCode::Home | KeyCode::PageUp, _) | (KeyCode::Char('g'), None) => help.selected = 0,
-            (KeyCode::End | KeyCode::PageDown, _) | (KeyCode::Char('G'), None) => help.selected = last,
             (KeyCode::Left | KeyCode::Right, Some(_)) => {}
             (KeyCode::Char('/'), filter @ None) => *filter = Some(String::new()),
             (KeyCode::Esc, filter @ Some(_)) => {
@@ -613,29 +640,69 @@ impl App {
         self.mode = Mode::Picker(Picker { title, items, selected: 0, kind });
     }
 
-    fn on_picker_key(&mut self, code: KeyCode) -> Vec<Effect> {
+    /// Themes whose name contains `filter`, keeping the previewed one selected if it still matches.
+    fn theme_picker(&self, original: usize, filter: Option<String>) -> Picker {
+        let needle = filter.as_deref().unwrap_or_default().to_lowercase();
+        let ids: Vec<usize> = (0..THEMES.len()).filter(|&i| THEMES[i].name.contains(&needle)).collect();
+        Picker {
+            title: "Theme".into(),
+            items: ids.iter().map(|&i| THEMES[i].name.to_owned()).collect(),
+            selected: ids.iter().position(|&i| i == self.theme).unwrap_or(0),
+            kind: PickerKind::Theme { original, filter, ids },
+        }
+    }
+
+    fn on_picker_key(&mut self, code: KeyCode, ctrl: bool, count: usize) -> Vec<Effect> {
         let Mode::Picker(picker) = &mut self.mode else { return Vec::new() };
-        let last = picker.items.len().saturating_sub(1);
-        match code {
-            KeyCode::Char('j') | KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
-            KeyCode::Char('k') | KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
-            KeyCode::Enter | KeyCode::Char('y') => {
-                let Mode::Picker(picker) = std::mem::replace(&mut self.mode, Mode::Normal) else {
-                    unreachable!()
-                };
-                return self.on_picked(picker);
-            }
-            KeyCode::Esc | KeyCode::Char('q' | 'n') => {
-                if let PickerKind::Theme { original } = picker.kind {
-                    self.theme = original;
+        // `/` starts a theme search; while it is open, typing edits it and esc clears it.
+        if let PickerKind::Theme { original, filter, .. } = &mut picker.kind {
+            let edited = match (code, &mut *filter) {
+                (KeyCode::Char('/'), None) => {
+                    *filter = Some(String::new());
+                    true
                 }
-                self.mode = Mode::Normal;
+                (KeyCode::Esc, Some(_)) => {
+                    *filter = None;
+                    true
+                }
+                (_, Some(text)) => edit(text, code, ctrl, 32),
+                _ => false,
+            };
+            if edited {
+                let (original, filter) = (*original, filter.clone());
+                let picker = self.theme_picker(original, filter);
+                if let PickerKind::Theme { ids, .. } = &picker.kind {
+                    self.theme = ids.get(picker.selected).copied().unwrap_or(original);
+                }
+                self.mode = Mode::Picker(picker);
                 return Vec::new();
             }
-            _ => {}
         }
-        if let PickerKind::Theme { .. } = picker.kind {
-            self.theme = picker.selected;
+        let page = self.page;
+        let Mode::Picker(picker) = &mut self.mode else { return Vec::new() };
+        match list_motion(code, false, picker.selected, picker.items.len(), page, count) {
+            Some(to) => picker.selected = to,
+            None => match code {
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    let Mode::Picker(picker) = std::mem::replace(&mut self.mode, Mode::Normal) else {
+                        unreachable!()
+                    };
+                    return self.on_picked(picker);
+                }
+                KeyCode::Esc | KeyCode::Char('q' | 'n') => {
+                    if let PickerKind::Theme { original, .. } = picker.kind {
+                        self.theme = original;
+                    }
+                    self.mode = Mode::Normal;
+                    return Vec::new();
+                }
+                _ => {}
+            },
+        }
+        if let PickerKind::Theme { ids, .. } = &picker.kind {
+            if let Some(&id) = ids.get(picker.selected) {
+                self.theme = id;
+            }
         }
         Vec::new()
     }
@@ -650,8 +717,12 @@ impl App {
                 self.query.language = ids[picker.selected];
                 self.refilter(true);
             }
-            PickerKind::Theme { .. } => {
-                self.theme = picker.selected;
+            PickerKind::Theme { original, ids, .. } => {
+                let Some(&id) = ids.get(picker.selected) else {
+                    self.theme = original;
+                    return Vec::new();
+                };
+                self.theme = id;
                 self.status = format!("Theme: {}", self.theme().name);
                 return vec![Effect::SaveTheme(self.theme().name)];
             }
@@ -690,6 +761,39 @@ impl App {
         self.scans_pending += 1;
         vec![Effect::Scan(Some(job.manager))]
     }
+}
+
+/// Moves in an overlay's list of `len` rows, shared by help and the pickers.
+/// Returns the new selection, or `None` if the key is not a motion. While a
+/// search is being typed only the non-letter keys move.
+fn list_motion(
+    code: KeyCode,
+    typing: bool,
+    selected: usize,
+    len: usize,
+    page: usize,
+    count: usize,
+) -> Option<usize> {
+    let last = len.saturating_sub(1);
+    let n = count.max(1);
+    // Overlays grow to fit their list, so half a page is half of what is shown,
+    // not half of the table behind them.
+    let half_page = (len.min(page) / 2).max(1);
+    let to = match code {
+        KeyCode::Down => selected + n,
+        KeyCode::Up => selected.saturating_sub(n),
+        KeyCode::Home | KeyCode::PageUp => 0,
+        KeyCode::End | KeyCode::PageDown => last,
+        _ if typing => return None,
+        KeyCode::Char('j') => selected + n,
+        KeyCode::Char('k') => selected.saturating_sub(n),
+        KeyCode::Char(')') => selected + n * half_page,
+        KeyCode::Char('(') => selected.saturating_sub(n * half_page),
+        KeyCode::Char('g') => 0,
+        KeyCode::Char('G') => last,
+        _ => return None,
+    };
+    Some(to.min(last))
 }
 
 /// Line editing shared by every text field: backspace, ctrl-u, ctrl-w and
@@ -752,6 +856,62 @@ mod tests {
     }
 
     #[test]
+    fn counts_repeat_motions() {
+        let mut app = app(&[]);
+        type_text(&mut app, "3j");
+        assert_eq!(app.selected, 3);
+        type_text(&mut app, "2kj");
+        assert_eq!(app.selected, 2, "a count applies to one motion only");
+        type_text(&mut app, "10j");
+        assert_eq!(app.selected, 4, "clamped to the last row");
+        type_text(&mut app, "2G");
+        assert_eq!(app.selected, 4, "G goes to the bottom whatever the count");
+        app.set_layout(4, true);
+        type_text(&mut app, "G(");
+        assert_eq!(app.selected, 2, "( goes up half a page");
+        type_text(&mut app, ")");
+        assert_eq!(app.selected, 4);
+        type_text(&mut app, "g0j");
+        assert_eq!(app.selected, 1, "a leading 0 is not a count");
+    }
+
+    #[test]
+    fn parens_page_through_help() {
+        let mut app = app(&[]);
+        app.set_layout(4, true);
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char(')'));
+        assert!(matches!(&app.mode, Mode::Help(h) if h.selected == 2));
+        press(&mut app, KeyCode::Char('('));
+        assert!(matches!(&app.mode, Mode::Help(h) if h.selected == 0));
+
+        app.set_layout(40, true);
+        press(&mut app, KeyCode::Char(')'));
+        assert!(
+            matches!(&app.mode, Mode::Help(h) if h.selected == HELP.len() / 2),
+            "half of the box, not the table"
+        );
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char(')'));
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == THEMES.len() / 2));
+        assert_eq!(app.theme, THEMES.len() / 2, "the theme previews as it moves");
+        type_text(&mut app, "3k");
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == THEMES.len() / 2 - 3));
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('?'));
+        type_text(&mut app, "5j2k");
+        assert!(matches!(&app.mode, Mode::Help(h) if h.selected == 3), "counts work in help");
+        type_text(&mut app, "/2");
+        assert!(
+            matches!(&app.mode, Mode::Help(h) if h.filter.as_deref() == Some("2")),
+            "digits search once / is open"
+        );
+    }
+
+    #[test]
     fn search_filters_live_and_escape_clears() {
         let mut app = app(&[]);
         press(&mut app, KeyCode::Char('/'));
@@ -796,6 +956,15 @@ mod tests {
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Down);
         assert_eq!((app.query.category, app.selected), (Some(0), 1));
+
+        app.set_layout(4, true);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Char(')'));
+        assert_eq!(app.query.category, Some(2), ") moves half a page of categories");
+        press(&mut app, KeyCode::Char('('));
+        assert_eq!(app.query.category, Some(0));
+        press(&mut app, KeyCode::Right);
+        app.set_layout(20, true);
 
         press(&mut app, KeyCode::Left);
         app.set_layout(20, false);
@@ -853,6 +1022,37 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(press(&mut app, KeyCode::Enter), [Effect::SaveTheme(THEMES[2].name)]);
         assert_eq!(app.theme, 2);
+    }
+
+    #[test]
+    fn theme_picker_searches_after_slash() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "NORD");
+        let Mode::Picker(picker) = &app.mode else { panic!("no picker") };
+        assert_eq!(picker.items, ["nord"]);
+        assert_eq!(THEMES[app.theme].name, "nord", "the match previews");
+        type_text(&mut app, "x");
+        assert_eq!(press(&mut app, KeyCode::Enter), [], "nothing to pick");
+        assert_eq!(app.theme, 0, "no match keeps the original");
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "q");
+        press(&mut app, KeyCode::Esc);
+        let Mode::Picker(picker) = &app.mode else { panic!("esc only clears the search") };
+        assert_eq!(picker.items.len(), THEMES.len());
+        press(&mut app, KeyCode::Char('G'));
+        assert_eq!(app.theme, THEMES.len() - 1, "G previews the last theme");
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.theme, 0, "g previews the first theme");
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "g");
+        let Mode::Picker(picker) = &app.mode else { panic!("g closed the picker") };
+        assert!(matches!(&picker.kind, PickerKind::Theme { filter: Some(f), .. } if f == "g"), "g is typed");
+        press(&mut app, KeyCode::End);
+        let Mode::Picker(picker) = &app.mode else { panic!("end closed the picker") };
+        assert_eq!(picker.selected, picker.items.len() - 1, "end still jumps while searching");
     }
 
     #[test]
