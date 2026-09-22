@@ -1,7 +1,7 @@
 //! Colour themes. `default` uses the terminal's own palette; the others paint
 //! their own background in 24-bit colour.
 
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 
 pub struct Theme {
     pub name: &'static str,
@@ -30,9 +30,31 @@ impl Theme {
         Style::new().fg(self.accent)
     }
 
+    /// `dim` text lit up towards bold `accent` by `level`, 0 to 1.
+    pub fn flash(&self, level: f32) -> Style {
+        let style = Style::new().fg(mix(self.dim, self.accent, level));
+        if level >= 0.5 {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
+    }
+
     pub fn selected(&self) -> Style {
         let fg = if self.bg == Color::Reset { Color::Black } else { self.bg };
         Style::new().fg(fg).bg(self.accent)
+    }
+}
+
+/// Blends 24-bit colours; named ones cannot blend, so they switch halfway.
+fn mix(from: Color, to: Color, level: f32) -> Color {
+    match (from, to) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let at = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
+            Color::Rgb(at(r1, r2), at(g1, g2), at(b1, b2))
+        }
+        _ if level < 0.5 => from,
+        _ => to,
     }
 }
 
@@ -262,4 +284,19 @@ pub const THEMES: &[Theme] = &[
 /// Index of the theme called `name`, falling back to `default`.
 pub fn by_name(name: &str) -> usize {
     THEMES.iter().position(|t| t.name == name.trim()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mix_blends_rgb_and_switches_named_colours() {
+        let (black, white) = (Color::Rgb(0, 0, 0), Color::Rgb(200, 100, 50));
+        assert_eq!(mix(black, white, 0.0), black);
+        assert_eq!(mix(black, white, 0.5), Color::Rgb(100, 50, 25));
+        assert_eq!(mix(black, white, 1.0), white);
+        assert_eq!(mix(Color::Reset, Color::Cyan, 0.4), Color::Reset);
+        assert_eq!(mix(Color::Reset, Color::Cyan, 0.6), Color::Cyan);
+    }
 }

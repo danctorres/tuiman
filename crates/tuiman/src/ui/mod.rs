@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use tuiman_index::Row;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, FLASH_TICKS};
 use crate::managers::MANAGERS;
 use crate::query::Sort;
 use crate::theme::Theme;
@@ -347,21 +347,47 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     if area.is_empty() {
         return;
     }
-    const HINTS: &str =
-        " / search · s sort · * stars · L language · i installed · a installable · c clear · enter install/uninstall · o open · t theme · ? help · q quit";
+    const HINTS: [&str; 12] = [
+        "/ search",
+        "s sort",
+        "* stars",
+        "L language",
+        "i installed",
+        "a installable",
+        "c clear",
+        "enter install/uninstall",
+        "o open",
+        "t theme",
+        "? help",
+        "q quit",
+    ];
     match app.status.is_empty() {
-        true => buf.set_stringn(area.x, area.y, HINTS, area.width as usize, t.dim()),
-        false => buf.set_stringn(
-            area.x + 1,
-            area.y,
-            &app.status,
-            area.width.saturating_sub(1) as usize,
-            match app.status.chars().next() {
-                Some('✓') => Style::new().fg(t.installed).patch(BOLD),
-                Some('✗') => Style::new().fg(t.archived).patch(BOLD),
-                _ => Style::new(),
-            },
-        ),
+        true => {
+            let mut x = area.x + 1;
+            for (i, hint) in HINTS.iter().enumerate() {
+                if i > 0 {
+                    x = buf.set_stringn(x, area.y, " · ", area.right().saturating_sub(x) as usize, t.dim()).0;
+                }
+                let style = match app.flash > 0 && hint_is_for(hint, &app.last_key) {
+                    true => t.flash(flash_level(app.flash)),
+                    false => t.dim(),
+                };
+                x = buf.set_stringn(x, area.y, hint, area.right().saturating_sub(x) as usize, style).0;
+            }
+        }
+        false => {
+            buf.set_stringn(
+                area.x + 1,
+                area.y,
+                &app.status,
+                area.width.saturating_sub(1) as usize,
+                match app.status.chars().next() {
+                    Some('✓') => Style::new().fg(t.installed).patch(BOLD),
+                    Some('✗') => Style::new().fg(t.archived).patch(BOLD),
+                    _ => Style::new(),
+                },
+            );
+        }
     };
 
     let scanning = if app.detecting { 1 } else { app.scans_pending };
@@ -390,6 +416,25 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         let text = format!(" {text} ");
         let width = (text.chars().count() as u16).min(right - area.x);
         buf.set_stringn(right - width, area.y, &text, width as usize, style);
+    }
+}
+
+/// How lit the hint is with `left` ticks to go: eases up to full over the
+/// first few ticks, holds, then eases back down.
+fn flash_level(left: u8) -> f32 {
+    const FADE: u8 = 4;
+    let x = ((FLASH_TICKS - left + 1).min(left) as f32 / FADE as f32).min(1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Whether a hint such as "s sort" or "enter install/uninstall" is for the
+/// echoed key, which may carry a count ("3s") and is spelt "Enter" by crossterm.
+fn hint_is_for(hint: &str, pressed: &str) -> bool {
+    let key = hint.split(' ').next().unwrap_or_default();
+    let pressed = pressed.trim_start_matches(|c: char| c.is_ascii_digit());
+    match key.len() {
+        1 => pressed == key,
+        _ => pressed.eq_ignore_ascii_case(key),
     }
 }
 
@@ -483,6 +528,25 @@ mod tests {
         press(&mut app, 'j');
         let status = render(&mut app, 120, 40).pop().unwrap();
         assert!(status.trim_end().ends_with(" 12j"), "the motion is echoed with its count: {status}");
+    }
+
+    #[test]
+    fn flash_fades_in_holds_and_fades_out() {
+        let levels: Vec<f32> = (1..=FLASH_TICKS).rev().map(flash_level).collect();
+        assert!(levels[0] > 0.0, "visible on the first frame");
+        assert!(levels.windows(2).take(3).all(|w| w[0] < w[1]), "{levels:?}");
+        assert_eq!(levels[FLASH_TICKS as usize / 2], 1.0);
+        assert!(levels.windows(2).rev().take(3).all(|w| w[0] > w[1]), "{levels:?}");
+    }
+
+    #[test]
+    fn hints_match_the_pressed_key() {
+        assert!(hint_is_for("s sort", "s"));
+        assert!(hint_is_for("s sort", "3s"));
+        assert!(!hint_is_for("L language", "l"), "case matters for letters");
+        assert!(hint_is_for("enter install/uninstall", "Enter"));
+        assert!(!hint_is_for("s sort", "^s"));
+        assert!(!hint_is_for("s sort", ""));
     }
 
     #[test]
