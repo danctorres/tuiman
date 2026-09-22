@@ -94,7 +94,8 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
     'main: loop {
         if app.dirty {
             let started = Instant::now();
-            app.set_page(ui::page(terminal.size()?.into()));
+            let (page, sidebar) = ui::layout(terminal.size()?.into());
+            app.set_layout(page, sidebar);
             terminal.draw(|frame| ui::draw(frame, &app))?;
             app.dirty = false;
             trace.frame(started.elapsed());
