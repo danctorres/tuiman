@@ -58,14 +58,12 @@ impl Installed {
         self.installed.clear();
         for row in catalog.rows() {
             let (mut available, mut installed) = (0, 0);
-            if !catalog.is_library(row) {
-                for (eco, package) in catalog.packages(row) {
-                    for &(id, _) in self.detected.iter().filter(|(id, _)| MANAGERS[*id as usize].eco == eco) {
-                        available |= 1 << id;
-                        let name = MANAGERS[id as usize].installed_name(package);
-                        if self.listings[id as usize].as_ref().is_some_and(|set| set.contains(name)) {
-                            installed |= 1 << id;
-                        }
+            for (eco, package) in catalog.packages(row) {
+                for &(id, _) in self.detected.iter().filter(|(id, _)| MANAGERS[*id as usize].eco == eco) {
+                    available |= 1 << id;
+                    let name = MANAGERS[id as usize].installed_name(package);
+                    if self.listings[id as usize].as_ref().is_some_and(|set| set.contains(name)) {
+                        installed |= 1 << id;
                     }
                 }
             }
@@ -216,8 +214,8 @@ pub mod tests {
         let available: Vec<bool> = c.rows().map(|r| inst.is_available(r)).collect();
         assert_eq!(
             available,
-            [true, true, true, false, false, false],
-            "library and nix-only rows are not installable"
+            [true, true, true, false, true, false],
+            "libraries install like anything else; nix-only rows need nix"
         );
         assert!(c.rows().all(|r| !inst.is_installed(r)));
     }
