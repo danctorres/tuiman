@@ -34,9 +34,9 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `tab` `shift-tab` | next / previous category |
 | `s` | cycle sort: stars, name, last push |
 | `*` `L` | minimum stars, language |
-| `I` `a` `A` | installed only, installable here only, show archived |
+| `i` `a` `A` | installed only, installable here only, show archived |
 | `c` | clear filters |
-| `enter` `u` | install, uninstall (always shows the exact command first) |
+| `enter` | install, or uninstall if installed (always shows the exact command first) |
 | `o` | open the project page |
 | `v` | view job output |
 | `t` | pick a colour theme (default, gruvbox, nord, catppuccin, tokyonight, dracula) |
