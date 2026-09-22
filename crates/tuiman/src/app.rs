@@ -355,6 +355,12 @@ impl App {
         self.scroll_into_view();
     }
 
+    /// A line up or down, wrapping around at the ends.
+    fn step_rows(&mut self, delta: isize) {
+        self.selected = wrap_step(self.selected, delta, self.view.rows.len());
+        self.scroll_into_view();
+    }
+
     fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && key.code == KeyCode::Char('c') {
@@ -435,8 +441,11 @@ impl App {
         if self.sidebar_focused {
             let categories = self.catalog.category_count() as isize + 1;
             let step = match code {
-                KeyCode::Char('j') | KeyCode::Down => n,
-                KeyCode::Char('k') | KeyCode::Up => -n,
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('k') | KeyCode::Up => {
+                    let step = if matches!(code, KeyCode::Char('j') | KeyCode::Down) { n } else { -n };
+                    let current = self.query.category.map_or(0, |c| c as usize + 1);
+                    wrap_step(current, step, categories as usize) as isize - current as isize
+                }
                 KeyCode::Char(')') => n * half_page,
                 KeyCode::Char('(') => -n * half_page,
                 // Row 1 is All, so 3gg lands on the second category.
@@ -481,8 +490,8 @@ impl App {
             KeyCode::Char('(') => self.move_by(-n * half_page),
             KeyCode::Char('d') if ctrl => self.move_by(n * half_page),
             KeyCode::Char('u') if ctrl => self.move_by(-n * half_page),
-            KeyCode::Char('j') | KeyCode::Down => self.move_by(n),
-            KeyCode::Char('k') | KeyCode::Up => self.move_by(-n),
+            KeyCode::Char('j') | KeyCode::Down => self.step_rows(n),
+            KeyCode::Char('k') | KeyCode::Up => self.step_rows(-n),
             KeyCode::PageDown => self.move_by(n * self.page as isize),
             KeyCode::PageUp => self.move_by(-n * self.page as isize),
             KeyCode::Char('g') if count > 0 => self.move_by(count as isize - 1 - self.selected as isize),
@@ -588,8 +597,8 @@ impl App {
                 self.query.text.clear();
                 self.mode = Mode::Normal;
             }
-            KeyCode::Down => return self.move_by(1),
-            KeyCode::Up => return self.move_by(-1),
+            KeyCode::Down => return self.step_rows(1),
+            KeyCode::Up => return self.step_rows(-1),
             _ if !edit(&mut self.query.text, code, ctrl, 64) => return,
             _ => {}
         }
@@ -861,13 +870,13 @@ fn list_motion(
     // not half of the table behind them.
     let half_page = (len.min(page) / 2).max(1);
     let to = match code {
-        KeyCode::Down => selected + n,
-        KeyCode::Up => selected.saturating_sub(n),
+        KeyCode::Down => wrap_step(selected, n as isize, len),
+        KeyCode::Up => wrap_step(selected, -(n as isize), len),
         KeyCode::Home | KeyCode::PageUp => 0,
         KeyCode::End | KeyCode::PageDown => last,
         _ if typing => return None,
-        KeyCode::Char('j') => selected + n,
-        KeyCode::Char('k') => selected.saturating_sub(n),
+        KeyCode::Char('j') => wrap_step(selected, n as isize, len),
+        KeyCode::Char('k') => wrap_step(selected, -(n as isize), len),
         KeyCode::Char(')') => selected + n * half_page,
         KeyCode::Char('(') => selected.saturating_sub(n * half_page),
         KeyCode::Char('g') => count.saturating_sub(1),
@@ -875,6 +884,17 @@ fn list_motion(
         _ => return None,
     };
     Some(to.min(last))
+}
+
+/// Steps `delta` rows through a list of `len`, clamping at the ends, except
+/// that stepping past an end the selection is already on wraps to the other.
+fn wrap_step(selected: usize, delta: isize, len: usize) -> usize {
+    let last = len.saturating_sub(1);
+    match delta.signum() {
+        -1 if selected == 0 => last,
+        1 if selected >= last => 0,
+        _ => selected.saturating_add_signed(delta).min(last),
+    }
 }
 
 /// Line editing shared by every text field: backspace, ctrl-u, ctrl-w and
@@ -923,11 +943,11 @@ mod tests {
         app.set_layout(2, true);
         assert_eq!(selected_name(&app), "lazygit");
         press(&mut app, KeyCode::Char('k'));
-        assert_eq!(app.selected, 0);
+        assert_eq!((app.selected, app.offset), (4, 3), "k at the top wraps to the bottom");
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!((app.selected, app.offset), (0, 0), "j at the bottom wraps to the top");
         press(&mut app, KeyCode::Char('G'));
         assert_eq!((app.selected, app.offset), (4, 3));
-        press(&mut app, KeyCode::Char('j'));
-        assert_eq!(app.selected, 4);
         type_text(&mut app, "gg");
         assert_eq!((app.selected, app.offset), (0, 0));
 
@@ -1035,7 +1055,9 @@ mod tests {
         let mut app = app(&[]);
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.query.category, None, "stops at All");
+        assert_eq!(app.query.category, Some(app.catalog.category_count() as u8 - 1), "wraps past All");
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.query.category, None, "wraps back to All");
         press(&mut app, KeyCode::Down);
         assert_eq!((app.query.category, app.selected), (Some(0), 0));
         assert!(press(&mut app, KeyCode::Enter).is_empty(), "enter leaves the sidebar, not install");
