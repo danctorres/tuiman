@@ -170,7 +170,7 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         (Mode::Search, _) | (_, false) => {
             Line::from(vec![" /".into(), Span::styled(app.query.text.as_str(), BOLD), " ".into()])
         }
-        _ => Line::from(" tuiman "),
+        _ => Line::from(" TUIs "),
     };
     let block = panel(t, !app.sidebar_focused).title_top(title).title_top(filters(app).right_aligned());
     let inner = block.inner(area);
@@ -411,7 +411,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
             ("a", "installable"),
             ("c", "clear"),
         ],
-        &[("t", "theme"), ("q", "quit")],
+        &[("r", "refresh"), ("t", "theme"), ("q", "quit")],
     ];
     const HELP: (&str, &str) = ("?", "help");
     const GROUP: &str = " │ ";
