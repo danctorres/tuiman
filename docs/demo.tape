@@ -2,10 +2,8 @@
 # out of git history: drag a new one into that issue and update the README
 # link. Re-record from the repo root with:
 # vhs docs/demo.tape (it builds and runs target/release/tuiman). Needs brew,
-# neither lazygit nor yazi installed yet, and the default theme saved (the
-# picker walks down three from it to catppuccin). The uninstall takes the last
-# row of the installed list, so no installed TUI may have fewer stars than
-# yazi.
+# neither lazygit nor yazi installed yet, btop installed, and a theme other
+# than dracula saved.
 
 Output docs/demo.gif
 
@@ -24,11 +22,11 @@ Show
 
 Sleep 1.5s
 
-# open the theme picker and walk down to catppuccin, previewing each theme
+# open the theme picker, search for dracula (the match previews) and pick it
 Type "t"
 Sleep 1s
-Down
-Sleep 0.7s
+Type "/dra"
+Sleep 1s
 Enter
 Sleep 1.5s
 
@@ -40,7 +38,7 @@ Sleep 1s
 Enter
 Sleep 1.5s
 Enter
-Wait+Screen@3m /install lazygit.*finished/
+Wait+Screen@3m / install lazygit.*finished/
 Sleep 1.5s
 
 # search and install yazi
@@ -52,22 +50,24 @@ Sleep 1s
 Enter
 Sleep 1.5s
 Enter
-Wait+Screen@3m /install yazi.*finished/
+Wait+Screen@3m / install yazi.*finished/
 Sleep 1.5s
 
-# back to the top of the full list, then only installed TUIs and uninstall the last one, yazi
+# only installed TUIs, then search for btop, uninstall it and clear all filters
 Escape
 Sleep 0.7s
-Type "gg"
-Sleep 1s
 Type "i"
 Sleep 1.5s
-Type "G"
+Type "/btop"
+Sleep 0.7s
+Enter
 Sleep 1s
 Enter
 Sleep 1.5s
 Enter
-Wait+Screen@3m /uninstall yazi.*finished/
+Wait+Screen@3m /uninstall btop.*finished/
+Sleep 1.5s
+Type "c"
 Sleep 2s
 
 Hide
