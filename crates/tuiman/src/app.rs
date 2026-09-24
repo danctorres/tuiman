@@ -25,6 +25,8 @@ pub enum Event {
     Resize,
     /// The `PATH` walk for package managers finished.
     Detected(Vec<(ManagerId, std::path::PathBuf)>),
+    /// The listing of every `PATH` directory finished.
+    OnPath(std::collections::HashSet<String>),
     /// A manager's "what is installed" scan finished.
     Listing(ManagerId, Vec<String>),
     Index(IndexUpdate),
@@ -278,6 +280,10 @@ impl App {
                 self.installed.set_detected(detected, &self.catalog);
                 self.refilter(true);
                 return vec![Effect::Scan(None)];
+            }
+            Event::OnPath(names) => {
+                self.installed.set_path_names(names, &self.catalog);
+                self.refilter(true);
             }
             Event::Listing(manager, names) => {
                 self.scans_pending = self.scans_pending.saturating_sub(1);

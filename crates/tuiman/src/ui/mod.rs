@@ -338,6 +338,8 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             put(buf, y, (0, 1), "⋯", t.accent());
         } else if app.installed.is_installed(row) {
             put(buf, y, (0, 1), "✓", Style::new().fg(t.installed));
+        } else if app.installed.is_on_path(row) {
+            put(buf, y, (0, 1), "•", Style::new().fg(t.installed));
         } else if app.installed.is_available(row) {
             put(buf, y, (0, 1), "○", t.dim());
         }
@@ -630,6 +632,9 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
             (false, false) => ("", t.dim()),
         };
         packages.push(Span::styled(format!("{mark}{}:{package}  ", eco.name()), style));
+    }
+    if app.installed.is_on_path(row) {
+        packages.push(Span::styled("• on PATH, not from a known manager  ", Style::new().fg(t.installed)));
     }
     if packages.len() == 1 {
         packages.push(Span::styled("none known (o opens the project page)", t.dim()));

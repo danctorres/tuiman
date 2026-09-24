@@ -17,6 +17,12 @@ pub fn detect(tx: Sender<Event>) {
     });
 }
 
+pub fn scan_path(tx: Sender<Event>) {
+    thread::spawn(move || {
+        let _ = tx.send(Event::OnPath(crate::paths::names_on_path()));
+    });
+}
+
 pub fn scan(tx: Sender<Event>, manager: ManagerId, bin: PathBuf) {
     thread::spawn(move || {
         let names = (MANAGERS[manager as usize].list_installed)(&bin);

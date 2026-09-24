@@ -97,6 +97,11 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `r` | refresh the index |
 | `c` | clear filters |
 
+In the list, `✓` means a package manager installed it, `•` means its binary is
+on your `PATH` but came from somewhere else (a downloaded release, a script, a
+build from source), and `○` means it can be installed here. tuiman cannot
+uninstall or upgrade a `•` TUI; `enter` on it installs a managed copy.
+
 The same core is scriptable:
 
 ```sh

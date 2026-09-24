@@ -19,6 +19,10 @@ pub struct Installed {
     available: Vec<Mask>,
     /// Per row: managers that report it installed.
     installed: Vec<Mask>,
+    /// File names on `PATH`; `None` until the walk lands.
+    path_names: Option<HashSet<String>>,
+    /// Per row: no manager reports it, but its binary is on `PATH`.
+    on_path: Vec<bool>,
 }
 
 /// One way to carry out an action on a row.
@@ -47,6 +51,17 @@ impl Installed {
         self.installed[row as usize] != 0
     }
 
+    /// Installed some other way (a release binary, a script, a build from
+    /// source): tuiman can see it but cannot uninstall or upgrade it.
+    pub fn is_on_path(&self, row: Row) -> bool {
+        self.on_path[row as usize]
+    }
+
+    pub fn set_path_names(&mut self, names: HashSet<String>, catalog: &Catalog) {
+        self.path_names = Some(names);
+        self.rebuild(catalog);
+    }
+
     pub fn set_listing(&mut self, manager: ManagerId, names: Vec<String>, catalog: &Catalog) {
         self.listings[manager as usize] = Some(names.into_iter().collect());
         self.rebuild(catalog);
@@ -56,6 +71,7 @@ impl Installed {
     pub fn rebuild(&mut self, catalog: &Catalog) {
         self.available.clear();
         self.installed.clear();
+        self.on_path.clear();
         for row in catalog.rows() {
             let (mut available, mut installed) = (0, 0);
             for (eco, package) in catalog.packages(row) {
@@ -69,6 +85,8 @@ impl Installed {
             }
             self.available.push(available);
             self.installed.push(installed);
+            let names = self.path_names.as_ref().filter(|_| installed == 0 && !catalog.is_library(row));
+            self.on_path.push(names.is_some_and(|names| binary_on_path(names, catalog, row)));
         }
     }
 
@@ -142,6 +160,17 @@ impl Installed {
         this.rebuild(catalog);
         this
     }
+}
+
+/// Whether a file on `PATH` is named like the project or like one of its
+/// packages. ponytail: a name guess; a same-named unrelated binary counts too.
+fn binary_on_path(names: &HashSet<String>, catalog: &Catalog, row: Row) -> bool {
+    names.contains(&catalog.name(row).to_ascii_lowercase())
+        || catalog.packages(row).any(|(eco, package)| {
+            let manager = MANAGERS.iter().find(|m| m.eco == eco);
+            let name = manager.map_or(package, |m| m.installed_name(package));
+            names.contains(name.rsplit('/').next().unwrap_or(name))
+        })
 }
 
 /// Why `action` has no [`Installed::choices`] on `row`. `page_hint` says how
@@ -256,6 +285,21 @@ pub mod tests {
             [Choice { manager: by_name("go").unwrap(), package: "github.com/jesseduffield/lazygit".into() }]
         );
         assert!(inst.choices(&c, 1, Action::Uninstall).is_empty());
+    }
+
+    #[test]
+    fn binaries_on_path_mark_unmanaged_rows() {
+        let c = catalog();
+        let mut inst = Installed::new(detected(&["apt"]), &c);
+        inst.set_listing(by_name("apt").unwrap(), vec!["btop".into()], &c);
+        let names = ["btop", "bottom", "lazygit", "ratatui", "mystery"];
+        inst.set_path_names(names.iter().map(|n| (*n).to_owned()).collect(), &c);
+        let on_path: Vec<bool> = c.rows().map(|r| inst.is_on_path(r)).collect();
+        assert_eq!(
+            on_path,
+            [false, true, true, false, false, true],
+            "a managed install wins; libraries are never binaries"
+        );
     }
 
     #[test]
