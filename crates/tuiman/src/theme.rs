@@ -96,6 +96,12 @@ impl Theme {
         let fg = if self.bg == Color::Reset { Color::Black } else { self.bg };
         Style::new().fg(fg).bg(self.accent)
     }
+
+    /// The selection bar while a search is typed, where enter only closes the
+    /// search: a dead grey, so it does not read as ready to act on.
+    pub fn searching(&self) -> Style {
+        self.selected().bg(self.dim)
+    }
 }
 
 /// Blends 24-bit colours; named ones cannot blend, so they switch halfway.

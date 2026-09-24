@@ -86,7 +86,11 @@ pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Optio
     // Keep the selection visible when the list is taller than the screen.
     let first = picker.selected.saturating_sub(inner.height.saturating_sub(1) as usize);
     for ((i, item), y) in picker.items.iter().enumerate().skip(first).zip(inner.y..inner.bottom()) {
-        let style = if i == picker.selected { t.selected() } else { Style::new() };
+        let style = match (i == picker.selected, search) {
+            (true, Some(Some(_))) => t.searching(),
+            (true, _) => t.selected(),
+            _ => Style::new(),
+        };
         buf.set_style(Rect::new(inner.x, y, inner.width, 1), style);
         if active == Some(i) {
             let mark = if i == picker.selected { style } else { Style::new().fg(t.installed) };
@@ -153,10 +157,11 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
     let first = help.selected.saturating_sub(list_height.saturating_sub(1));
     for ((i, (keys, what)), y) in rows.into_iter().enumerate().skip(first).zip(inner.y + 2..inner.bottom()) {
         let selected = i == help.selected;
+        let bar = if filter.is_some() { t.searching() } else { t.selected() };
         if selected {
-            buf.set_style(Rect::new(inner.x, y, inner.width, 1), t.selected());
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), bar);
         }
-        let keys_style = if selected { t.selected() } else { t.accent() };
+        let keys_style = if selected { bar } else { t.accent() };
         buf.set_stringn(inner.x, y, keys, 16, keys_style);
         let what_w = inner.width.saturating_sub(17);
         buf.set_stringn(inner.x + 17, y, what, what_w as usize, Style::new());
