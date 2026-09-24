@@ -724,7 +724,8 @@ impl App {
         let name = self.catalog.name(row);
         let choices = self.installed.choices(&self.catalog, row, action);
         if choices.is_empty() {
-            self.status = installed::impossible(&self.catalog, row, action, "press o to open its page");
+            let why = installed::impossible(&self.catalog, row, action, "press o to open its page");
+            self.status = format!("✗ {why}");
             return;
         }
         let items =
@@ -1382,7 +1383,7 @@ mod tests {
         let mut app = app(&["brew"]);
         press(&mut app, KeyCode::Char('G'));
         press(&mut app, KeyCode::Enter);
-        assert!(app.status.contains("packaged for nix"), "{}", app.status);
+        assert!(app.status.starts_with("✗ ") && app.status.contains("packaged for nix"), "{}", app.status);
         assert_eq!(app.mode, Mode::Normal);
     }
 
