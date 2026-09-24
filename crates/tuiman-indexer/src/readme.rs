@@ -55,7 +55,8 @@ fn entry(line: &str) -> Option<(&str, &str, &str)> {
     let (name, rest) = rest.split_once("](")?;
     let (url, desc) = rest.split_once(')')?;
     let url = url.trim().trim_end_matches('/');
-    if name.is_empty() || !(url.starts_with("https://") || url.starts_with("http://")) {
+    // The catalog refuses anything else, and one refused entry would fail the whole run.
+    if name.is_empty() || !tuiman_index::valid_url(url) {
         return None;
     }
     let desc = desc.trim().trim_start_matches(['-', ':', '–', '—']).trim();
@@ -140,6 +141,7 @@ mod tests {
                   - [a](https://github.com/o/a/) - does [things](https://x.y) with `code`\n\
                   - [dup](https://GitHub.com/o/A) again\n\
                   - [anchor](#nope) skipped\n\
+                  - [titled](https://github.com/o/t \"a title\") skipped, not a valid url\n\
                   - not an entry\n";
         let list = parse(md);
         assert_eq!(list.len(), 1);
