@@ -275,11 +275,10 @@ impl App {
                 self.flash = self.flash.saturating_sub(1);
             }
             Event::Detected(detected) => {
-                self.scans_pending += detected.len();
                 self.detecting = false;
                 self.installed.set_detected(detected, &self.catalog);
                 self.refilter(true);
-                return vec![Effect::Scan(None)];
+                return self.rescan(None);
             }
             Event::OnPath(names) => {
                 self.installed.set_path_names(names, &self.catalog);
@@ -335,12 +334,24 @@ impl App {
             true => format!("✓ {} finished", job.title),
             false => format!("✗ {} failed (press v for the log)", job.title),
         };
-        let mut effects = vec![Effect::Scan(Some(job.manager))];
-        self.scans_pending += 1;
+        let mut effects = self.rescan(Some(job.manager));
         if let Some(next) = self.queue.pop_front() {
             effects.push(self.start(next));
         }
         effects
+    }
+
+    /// Rescans one manager, or every detected one. The pending count is taken
+    /// from what the shell will actually start: a manager that disappeared
+    /// between confirming a job and its end would otherwise be waited on forever.
+    fn rescan(&mut self, only: Option<ManagerId>) -> Vec<Effect> {
+        let n = self.installed.detected().iter().filter(|(id, _)| only.is_none_or(|o| o == *id)).count();
+        self.scans_pending += n;
+        match n {
+            0 if self.scans_pending == 0 => vec![Effect::SaveInstalled],
+            0 => Vec::new(),
+            _ => vec![Effect::Scan(only)],
+        }
     }
 
     fn start(&mut self, job: Job) -> Effect {
@@ -881,8 +892,7 @@ impl App {
             true => format!("✓ {} finished", job.title),
             false => format!("✗ {} failed", job.title),
         };
-        self.scans_pending += 1;
-        vec![Effect::Scan(Some(job.manager))]
+        self.rescan(Some(job.manager))
     }
 }
 
@@ -1385,6 +1395,20 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         let Mode::Picker(picker) = &app.mode else { panic!("no confirm") };
         assert_eq!(picker.items, ["brew uninstall lazygit"]);
+    }
+
+    #[test]
+    fn a_job_whose_manager_vanished_does_not_wait_on_a_scan() {
+        let mut app = app(&["brew"]);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.running.is_some());
+        // Startup detection lands meanwhile and brew is no longer on PATH.
+        let effects = app.update(Event::Detected(Vec::new()));
+        assert_eq!((effects, app.scans_pending), (vec![Effect::SaveInstalled], 0));
+        let effects = app.update(Event::JobDone { ok: true });
+        assert_eq!(effects, [Effect::SaveInstalled], "nothing to scan, so the cache is saved right away");
+        assert_eq!((app.scans_pending, app.running.is_none()), (0, true));
     }
 
     #[test]
