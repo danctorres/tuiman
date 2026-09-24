@@ -22,7 +22,9 @@ pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
 pub fn enter() -> io::Result<Term> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    // The cursor only shows in a search box; a blinking block there is hard to miss.
+    // The terminal does the blinking, so it costs no redraws.
+    execute!(io::stdout(), EnterAlternateScreen, cursor::SetCursorStyle::BlinkingBlock)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     Ok(terminal)
@@ -30,7 +32,8 @@ pub fn enter() -> io::Result<Term> {
 
 /// Safe to call more than once, and from the panic hook.
 pub fn leave() {
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
+    let _ =
+        execute!(io::stdout(), LeaveAlternateScreen, cursor::SetCursorStyle::DefaultUserShape, cursor::Show);
     let _ = disable_raw_mode();
 }
 

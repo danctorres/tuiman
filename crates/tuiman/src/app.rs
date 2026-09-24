@@ -258,7 +258,15 @@ impl App {
     pub fn update(&mut self, event: Event) -> Vec<Effect> {
         self.dirty = true;
         match event {
-            Event::Key(key) => return self.on_key(key),
+            Event::Key(key) => {
+                let effects = self.on_key(key);
+                // With a search box open the lit hint is hidden or replaced, so its
+                // animation would only redraw, and each redraw restarts the cursor's blink.
+                if !self.takes_count() {
+                    self.flash = 0;
+                }
+                return effects;
+            }
             Event::Resize => {}
             Event::Tick => {
                 self.spinner = self.spinner.wrapping_add(1);
@@ -1276,6 +1284,25 @@ mod tests {
         }
         assert_eq!(app.flash, 0);
         assert!(!app.busy(), "and stop once it goes dark");
+    }
+
+    #[test]
+    fn opening_a_search_starts_no_ticks() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Char('/'));
+        assert!(!app.busy(), "redraws would restart the cursor's blink");
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::Char('/'));
+        assert!(!app.busy(), "nor in the sidebar");
+        press(&mut app, KeyCode::Esc);
+        for open in ['t', '?'] {
+            press(&mut app, KeyCode::Char(open));
+            press(&mut app, KeyCode::Char('/'));
+            assert!(!app.busy(), "nor in the {open} overlay, lit by the key that opened it");
+            press(&mut app, KeyCode::Esc);
+            press(&mut app, KeyCode::Esc);
+        }
     }
 
     #[test]

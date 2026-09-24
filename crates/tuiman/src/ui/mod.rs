@@ -138,20 +138,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if matches!(app.mode, Mode::Picker(_) | Mode::Help(_) | Mode::Log) {
         dim_backdrop(buf, area, app.theme());
     }
-    match &app.mode {
-        Mode::Picker(picker) => {
-            if let Some(pos) = overlay::picker(buf, area, picker, app.theme()) {
-                frame.set_cursor_position(pos);
-            }
+    let mut cursor = match &app.mode {
+        Mode::Picker(picker) => overlay::picker(buf, area, picker, app.theme()),
+        Mode::Help(help) => overlay::help(buf, area, app.theme(), help),
+        Mode::Log => {
+            overlay::log(buf, area, app);
+            None
         }
-        Mode::Help(help) => {
-            if let Some(pos) = overlay::help(buf, area, app.theme(), help) {
-                frame.set_cursor_position(pos);
-            }
-        }
-        Mode::Log => overlay::log(buf, area, app),
-        Mode::Normal | Mode::Search | Mode::CategorySearch { .. } => {}
-    }
+        Mode::Normal | Mode::Search | Mode::CategorySearch { .. } => None,
+    };
     let typing = match &app.mode {
         Mode::Search => Some((areas.table, app.query.text.as_str())),
         Mode::CategorySearch { text, .. } if !areas.sidebar.is_empty() => {
@@ -162,16 +157,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some((rect, text)) = typing {
         // Title starts after the corner and " /".
         let x = rect.x + 3 + text.chars().count() as u16;
-        frame.set_cursor_position((x.min(rect.right().saturating_sub(2)), rect.y));
+        cursor = Some((x.min(rect.right().saturating_sub(2)), rect.y));
+    }
+    if let Some(pos) = cursor {
+        frame.set_cursor_position(pos);
     }
 }
 
 fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
     let title = match &app.mode {
-        Mode::CategorySearch { text, .. } => {
-            Line::from(vec![" /".into(), Span::styled(text.as_str(), BOLD), " ".into()])
-        }
+        Mode::CategorySearch { text, .. } => search_title(text, true, t),
         _ => Line::from(" Categories "),
     };
     let block = panel(t, app.sidebar_focused).title(title);
@@ -264,9 +260,8 @@ impl Columns {
 fn table(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
     let title = match (&app.mode, app.query.text.is_empty()) {
-        (Mode::Search, _) | (_, false) => {
-            Line::from(vec![" /".into(), Span::styled(app.query.text.as_str(), BOLD), " ".into()])
-        }
+        (Mode::Search, _) => search_title(&app.query.text, true, t),
+        (_, false) => search_title(&app.query.text, false, t),
         _ => Line::from(" TUIs "),
     };
     let block = panel(t, !app.sidebar_focused).title_top(title).title_top(filters(app).right_aligned());
@@ -465,6 +460,15 @@ fn rail(buf: &mut Buffer, area: Rect, rows: usize, offset: usize, page: usize, t
     let x = area.right() - 1;
     for y in area.y + 1 + top..(area.y + 1 + top + size).min(area.bottom() - 1) {
         buf[(x, y)].set_symbol("┃").set_fg(t.accent);
+    }
+}
+
+/// A panel's ` /text ` title. While it is being typed it is lit in the accent;
+/// once applied it settles to a dim slash and plain text.
+fn search_title<'a>(text: &'a str, typing: bool, t: &Theme) -> Line<'a> {
+    match typing {
+        true => Line::from(format!(" /{text} ")).style(t.accent().patch(BOLD)),
+        false => Line::from(vec![" ".into(), Span::styled("/", t.dim()), text.into(), " ".into()]),
     }
 }
 
@@ -702,6 +706,12 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         ],
         &[("r", "refresh"), ("t", "theme"), ("q", "quit")],
     ];
+    // While a search is open, letters type, so only the keys that end it matter.
+    let groups: &[&[(&str, &str)]] = match app.mode {
+        Mode::Search => &[&[("enter", "apply"), ("esc", "clear"), ("↑↓", "move")]],
+        Mode::CategorySearch { .. } => &[&[("enter", "keep"), ("esc", "cancel")]],
+        _ => &HINTS,
+    };
     const HELP: (&str, &str) = ("?", "help");
     // Same width either way, so the fitting maths below does not care which.
     let divider: &str = if nerd() { POWER_SEP } else { " │ " };
@@ -717,11 +727,24 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         let x = buf.set_stringn(x, area.y, key, end.saturating_sub(x) as usize, key_style).0;
         buf.set_stringn(x, area.y, format!(" {label}"), end.saturating_sub(x) as usize, label_style).0
     };
-    let width =
-        |sep: &str, (key, label): (&str, &str)| (sep.chars().count() + key.len() + 1 + label.len()) as u16;
+    let width = |sep: &str, (key, label): (&str, &str)| {
+        (sep.chars().count() + key.chars().count() + 1 + label.len()) as u16
+    };
     let help_end = end.saturating_sub(width(divider, HELP));
     let mut x = area.x + 1;
-    'groups: for (g, group) in HINTS.iter().enumerate() {
+    // A solid mode badge, as vim's -- INSERT --, so typing is never mistaken for commands.
+    let badge = match app.mode {
+        Mode::Search => Some(" SEARCH "),
+        Mode::CategorySearch { .. } => Some(" CATEGORY "),
+        _ => None,
+    };
+    if let Some(badge) = badge {
+        x = buf
+            .set_stringn(x, area.y, badge, help_end.saturating_sub(x) as usize, t.selected().patch(BOLD))
+            .0
+            + 1;
+    }
+    'groups: for (g, group) in groups.iter().enumerate() {
         for (i, &hint) in group.iter().enumerate() {
             let sep = match (g, i) {
                 (0, 0) => "",
@@ -1109,8 +1132,15 @@ mod tests {
         let screen = render(&mut app, 100, 24);
         assert!(screen[1].contains("/bt"), "{}", screen[1]);
         assert!(!screen.join("\n").contains("lazygit description"));
+        assert!(
+            screen[23].contains(" SEARCH  enter apply") && !screen[23].contains("/ search"),
+            "{}",
+            screen[23]
+        );
 
         app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        let screen = render(&mut app, 100, 24);
+        assert!(screen[1].contains("/bt") && screen[23].contains("/ search"), "{}", screen[23]);
         press(&mut app, 'j');
         app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
         let all = render(&mut app, 100, 24).join("\n");
