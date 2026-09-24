@@ -36,7 +36,9 @@ pub fn refresh(cache_dir: &Path) -> IndexUpdate {
 
 fn try_refresh(cache_dir: &Path) -> Result<IndexUpdate, String> {
     let source = env::var("TUIMAN_INDEX_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned());
-    let have_index = cache_dir.join(INDEX_FILE).exists();
+    // The ETag is only worth sending for a cache that can be read back: a 304
+    // for a corrupt file would keep reporting "up to date" over an empty catalog.
+    let have_index = load_cached(cache_dir).is_some();
     let etag = fs::read_to_string(cache_dir.join(ETAG_FILE)).ok().filter(|e| have_index && !e.is_empty());
 
     let (bytes, new_etag) = if source.starts_with("https://") {
