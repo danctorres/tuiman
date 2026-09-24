@@ -185,7 +185,12 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// A rescan of one manager follows a job, which may also have added or removed
+/// a binary on `PATH`; the full rescan at start has its own PATH walk.
 fn scan(tx: &Sender<Event>, app: &App, only: Option<managers::ManagerId>) {
+    if only.is_some() {
+        worker::scan_path(tx.clone());
+    }
     for (id, bin) in app.installed.detected().iter().filter(|(id, _)| only.is_none_or(|o| o == *id)) {
         worker::scan(tx.clone(), *id, bin.clone());
     }
