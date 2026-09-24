@@ -211,8 +211,10 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(x, y, &count, count.len(), if id == app.query.category { style } else { t.dim() });
         // After the text, which would otherwise paint over the sweep.
         let on_bar = id == app.query.category;
-        if on_bar {
-            cursor_bar(buf, line, t, app.sidebar_focused);
+        match (&app.mode, on_bar) {
+            (Mode::CategorySearch { .. }, true) => buf.set_style(line, t.searching()),
+            (_, true) => cursor_bar(buf, line, t, app.sidebar_focused),
+            _ => {}
         }
         // Show which letters the sidebar search jumped on: only on the row it
         // landed on, and only in the name, which is all the search looks at.
@@ -357,7 +359,11 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         }
         put(buf, y, cols.desc, cat.desc(row), text);
         if selected {
-            cursor_bar(buf, Rect::new(inner.x, y, inner.width, 1), t, !app.sidebar_focused);
+            let bar = Rect::new(inner.x, y, inner.width, 1);
+            match app.mode {
+                Mode::Search => buf.set_style(bar, t.searching()),
+                _ => cursor_bar(buf, bar, t, !app.sidebar_focused),
+            }
         }
         // Light up where the search landed, in whichever cell it matched.
         // After the bar, so the match is styled for whatever it sits on.
@@ -858,6 +864,11 @@ mod tests {
         let border = (buf[(table.x, table.y)].fg, buf[(table.right() - 1, table.bottom() - 1)].fg);
         assert_eq!(border.0, THEMES[app.theme].accent);
         assert_eq!(border.1, THEMES[app.theme].link, "and the border ends at the link colour");
+
+        app.mode = Mode::Search;
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(table.x + 1, bar)].bg, THEMES[app.theme].dim, "grey while searching");
     }
 
     #[test]

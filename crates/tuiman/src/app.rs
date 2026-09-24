@@ -601,6 +601,12 @@ impl App {
                 *filter = None;
                 help.selected = 0;
             }
+            // Closes the search, keeping the cursor on the entry it was on.
+            (KeyCode::Enter, Some(_)) => {
+                let entry = help.rows().nth(help.selected);
+                help.filter = None;
+                help.selected = entry.and_then(|e| HELP.iter().position(|h| h == e)).unwrap_or(0);
+            }
             (_, Some(filter)) => match edit(filter, code, ctrl, 32) {
                 true => help.selected = 0,
                 false => self.mode = Mode::Normal,
@@ -612,7 +618,8 @@ impl App {
 
     fn on_search_key(&mut self, code: KeyCode, ctrl: bool) {
         match code {
-            KeyCode::Enter => self.mode = Mode::Normal,
+            // The query is unchanged, so the cursor stays where the arrows left it.
+            KeyCode::Enter => return self.mode = Mode::Normal,
             KeyCode::Esc => {
                 self.query.text.clear();
                 self.mode = Mode::Normal;
@@ -629,16 +636,14 @@ impl App {
         let Mode::CategorySearch { text, original } = &mut self.mode else { return };
         let original = *original;
         match code {
-            KeyCode::Enter => {
-                self.mode = Mode::Normal;
-                self.sidebar_focused = false;
-                return;
-            }
+            KeyCode::Enter => return self.mode = Mode::Normal,
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.query.category = original;
                 return self.refilter(true);
             }
+            KeyCode::Down => return self.step_category(1, true),
+            KeyCode::Up => return self.step_category(-1, true),
             _ => {}
         }
         if !edit(text, code, ctrl, 32) {
@@ -754,14 +759,15 @@ impl App {
 
     fn on_picker_key(&mut self, code: KeyCode, ctrl: bool, count: usize) -> Vec<Effect> {
         let Mode::Picker(picker) = &mut self.mode else { return Vec::new() };
-        // `/` starts a theme search; while it is open, typing edits it and esc clears it.
+        // `/` starts a theme search; while it is open, typing edits it, and esc
+        // or enter close it on the theme being previewed.
         if let PickerKind::Theme { original, filter, .. } = &mut picker.kind {
             let edited = match (code, &mut *filter) {
                 (KeyCode::Char('/'), None) => {
                     *filter = Some(String::new());
                     true
                 }
-                (KeyCode::Esc, Some(_)) => {
+                (KeyCode::Esc | KeyCode::Enter, Some(_)) => {
                     *filter = None;
                     true
                 }
@@ -1054,6 +1060,15 @@ mod tests {
     }
 
     #[test]
+    fn enter_in_search_keeps_the_arrowed_row() {
+        let mut app = app(&[]);
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!((&app.mode, app.selected), (&Mode::Normal, 1));
+    }
+
+    #[test]
     fn typing_q_in_search_does_not_quit() {
         let mut app = app(&[]);
         press(&mut app, KeyCode::Char('/'));
@@ -1132,8 +1147,12 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         let category = app.query.category.expect("kept the category");
         assert_eq!(app.catalog.category_name(category), "Development");
-        assert_eq!((&app.mode, app.sidebar_focused), (&Mode::Normal, false));
+        assert_eq!((&app.mode, app.sidebar_focused), (&Mode::Normal, true), "enter only closes the search");
         assert!(app.query.text.is_empty(), "the list search is untouched");
+
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.query.category, Some(category + 1), "arrows move while searching");
     }
 
     #[test]
@@ -1175,8 +1194,9 @@ mod tests {
         assert_eq!(picker.items, ["nord"]);
         assert_eq!(THEMES[app.theme].name, "nord", "the match previews");
         type_text(&mut app, "x");
-        assert_eq!(press(&mut app, KeyCode::Enter), [], "nothing to pick");
+        assert_eq!(press(&mut app, KeyCode::Enter), [], "enter closes the search");
         assert_eq!(app.theme, 0, "no match keeps the original");
+        press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "q");
@@ -1227,6 +1247,15 @@ mod tests {
         press(&mut app, KeyCode::Char('G'));
         let Mode::Help(help) = &app.mode else { panic!("G closes help") };
         assert_eq!(help.selected, HELP.len() - 1);
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "theme");
+        press(&mut app, KeyCode::Enter);
+        let Mode::Help(help) = &app.mode else { panic!("enter closes help while searching") };
+        assert_eq!(
+            (help.filter.as_deref(), HELP[help.selected].1),
+            (None, "colour theme"),
+            "enter keeps the entry"
+        );
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
 
@@ -1263,7 +1292,8 @@ mod tests {
         assert!(matches!(app.mode, Mode::Picker(_)), "copying keeps the picker open");
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "zzz");
-        assert!(press(&mut app, KeyCode::Enter).is_empty(), "no theme to pick");
+        assert!(press(&mut app, KeyCode::Enter).is_empty(), "enter closes the search");
+        press(&mut app, KeyCode::Esc);
 
         press(&mut app, KeyCode::Char('?'));
         assert_eq!(copied(press(&mut app, KeyCode::Char('y'))), format!("{}  {}", HELP[0].0, HELP[0].1));
