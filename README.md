@@ -2,7 +2,7 @@
 
 A fast TUI manager with vim keybindings.
 
-![tuiman searching, filtering and installing a TUI](https://github.com/user-attachments/assets/fa0cf889-0ac5-435f-a997-6a7bd722e01c)
+![tuiman searching, filtering and installing a TUI](https://github.com/user-attachments/assets/3a3bdb0c-257e-43d6-8bcb-f232c9bfe050)
 
 tuiman browses the ~700 terminal applications curated in
 [awesome-tuis](https://github.com/rothgar/awesome-tuis), lets you search and
