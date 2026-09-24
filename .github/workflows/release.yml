@@ -54,6 +54,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -66,9 +69,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        # Notes list the commit subjects since the previous tag; GitHub's
+        # --generate-notes only lists merged PRs, and most changes land on main.
         run: |
+          prev=$(git describe --tags --abbrev=0 "$VERSION^")
+          {
+            echo "## What's Changed"
+            git log --pretty='- %s' "$prev..$VERSION" | grep -v '^- chore(release)'
+            echo
+            echo "**Full Changelog**: https://github.com/$GH_REPO/compare/$prev...$VERSION"
+          } > notes.md
           gh release view "$VERSION" >/dev/null 2>&1 ||
-            gh release create "$VERSION" --verify-tag --generate-notes
+            gh release create "$VERSION" --verify-tag --notes-file notes.md
           gh release upload "$VERSION" dist/* --clobber
 
   # Publishes tuiman-index and tuiman to crates.io via trusted publishing
