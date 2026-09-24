@@ -336,6 +336,8 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
             put(buf, y, (0, 1), "⋯", t.accent());
         } else if app.installed.is_installed(row) {
             put(buf, y, (0, 1), "✓", Style::new().fg(t.installed));
+        } else if app.installed.is_available(row) {
+            put(buf, y, (0, 1), "○", t.dim());
         }
         // Numbered from 1, so the number is what 3gg takes.
         if let Some(number) = cols.number {
@@ -828,6 +830,9 @@ mod tests {
             screen[4]
         );
         assert!(screen[4].contains("✓") && screen[4].contains("btop"), "installed mark: {}", screen[4]);
+        assert!(screen[3].contains("○") && !screen[4].contains("○"), "installable mark: {}", screen[3]);
+        let mystery = screen.iter().find(|l| l.contains("mystery description")).unwrap();
+        assert!(!mystery.contains("○") && !mystery.contains("✓"), "nothing to install: {mystery}");
         assert!(all.contains("https://github.com/o/lazygit") && all.contains("brew:lazygit"));
         assert!(all.contains("Dashboards") && all.contains("/ search"));
         assert!(!all.contains("oldtool"), "archived rows are hidden by default");
