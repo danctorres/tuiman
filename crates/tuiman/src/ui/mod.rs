@@ -20,7 +20,7 @@ use tuiman_index::Row;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Mode, FLASH_TICKS};
-use crate::managers::MANAGERS;
+use crate::managers::{HOST, MANAGERS};
 use crate::query::Sort;
 use crate::theme::Theme;
 
@@ -626,6 +626,10 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
     let mut packages = vec![Span::styled("Packages: ", t.dim())];
     let installed_via: Vec<&str> = app.installed.installed_via(row).collect();
     for (eco, package) in cat.packages(row) {
+        // Other platforms' release binaries are noise here.
+        if eco.is_release() && Some(eco) != HOST {
+            continue;
+        }
         let mut here =
             app.installed.detected().iter().map(|(id, _)| &MANAGERS[*id as usize]).filter(|m| m.eco == eco);
         let available = here.clone().next().is_some();
@@ -635,7 +639,11 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
             (false, true) => ("", Style::new()),
             (false, false) => ("", t.dim()),
         };
-        packages.push(Span::styled(format!("{mark}{}:{package}  ", eco.name()), style));
+        let label = match eco.is_release() {
+            true => format!("github:{}", crate::release::tag(package)),
+            false => format!("{}:{package}", eco.name()),
+        };
+        packages.push(Span::styled(format!("{mark}{label}  "), style));
     }
     if app.installed.is_on_path(row) {
         packages.push(Span::styled("• on PATH, not from a known manager  ", Style::new().fg(t.installed)));

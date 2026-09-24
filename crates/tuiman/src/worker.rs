@@ -37,8 +37,12 @@ pub fn refresh_index(tx: Sender<Event>, cache_dir: PathBuf) {
 }
 
 /// Builds the process for a job. Always an argument vector, never a shell.
+/// Release installs are `tuiman` itself, which need not be on `PATH`.
 pub fn command(job: &Job) -> Command {
-    let mut command = Command::new(&job.argv[0]);
+    let mut command = match MANAGERS[job.manager as usize].eco.is_release() {
+        true => Command::new(std::env::current_exe().unwrap_or_else(|_| job.argv[0].clone().into())),
+        false => Command::new(&job.argv[0]),
+    };
     command.args(&job.argv[1..]);
     command
 }

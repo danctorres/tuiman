@@ -35,10 +35,16 @@ pub enum Ecosystem {
     Pacman = 7,
     Aur = 8,
     Nix = 9,
+    /// Prebuilt binaries attached to a GitHub release, one ecosystem per
+    /// platform. The package is `owner/repo/tag/asset`.
+    ReleaseLinuxX64 = 10,
+    ReleaseLinuxArm64 = 11,
+    ReleaseMacosX64 = 12,
+    ReleaseMacosArm64 = 13,
 }
 
 impl Ecosystem {
-    pub const ALL: [Ecosystem; 10] = [
+    pub const ALL: [Ecosystem; 14] = [
         Ecosystem::Brew,
         Ecosystem::Crates,
         Ecosystem::Go,
@@ -49,6 +55,10 @@ impl Ecosystem {
         Ecosystem::Pacman,
         Ecosystem::Aur,
         Ecosystem::Nix,
+        Ecosystem::ReleaseLinuxX64,
+        Ecosystem::ReleaseLinuxArm64,
+        Ecosystem::ReleaseMacosX64,
+        Ecosystem::ReleaseMacosArm64,
     ];
 
     /// Unknown ids are not an error: an older client must keep working when
@@ -69,7 +79,16 @@ impl Ecosystem {
             Ecosystem::Pacman => "pacman",
             Ecosystem::Aur => "aur",
             Ecosystem::Nix => "nix",
+            Ecosystem::ReleaseLinuxX64 => "release-linux-x64",
+            Ecosystem::ReleaseLinuxArm64 => "release-linux-arm64",
+            Ecosystem::ReleaseMacosX64 => "release-macos-x64",
+            Ecosystem::ReleaseMacosArm64 => "release-macos-arm64",
         }
+    }
+
+    pub fn is_release(self) -> bool {
+        use Ecosystem::*;
+        matches!(self, ReleaseLinuxX64 | ReleaseLinuxArm64 | ReleaseMacosX64 | ReleaseMacosArm64)
     }
 
     pub fn from_name(name: &str) -> Option<Ecosystem> {
@@ -91,6 +110,14 @@ pub fn valid_package_name(name: &str) -> bool {
         && name.len() <= 200
         && !name.starts_with('-')
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"@._+/-".contains(&b))
+}
+
+/// A release asset the client can unpack with `tar` or `unzip`. Shared by the
+/// indexer (which picks assets) and the client (which installs them) so the
+/// two never disagree.
+pub fn is_archive(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tbz", ".zip"].iter().any(|ext| lower.ends_with(ext))
 }
 
 /// Emoji, dingbats, variation selectors and joiners. Terminals disagree about
@@ -353,7 +380,15 @@ mod tests {
 
     #[test]
     fn package_names() {
-        for ok in ["btop", "lazygit", "@scope/pkg", "github.com/a/b/cmd/x", "python3Packages.foo", "g++"] {
+        for ok in [
+            "btop",
+            "lazygit",
+            "@scope/pkg",
+            "github.com/a/b/cmd/x",
+            "python3Packages.foo",
+            "g++",
+            "o/r/v1.0/r_1.0_linux_x86_64.tar.gz",
+        ] {
             assert!(valid_package_name(ok), "{ok}");
         }
         for bad in ["", "-rf", "--force", "a;b", "a b", "a$(b)", "a\nb", "a`b`", "ä"] {

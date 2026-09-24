@@ -60,16 +60,22 @@ fn try_refresh(cache_dir: &Path) -> Result<IndexUpdate, String> {
     Ok(IndexUpdate::Fresh(Box::new(catalog)))
 }
 
+/// HTTPS only, identified as tuiman; timeouts are set per request.
+pub fn agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .https_only(true)
+        .user_agent(concat!("tuiman/", env!("CARGO_PKG_VERSION")));
+    config.build().into()
+}
+
 /// `Ok(None)` means 304 Not Modified.
 fn download(url: &str, etag: Option<&str>) -> Result<Option<(Vec<u8>, String)>, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let mut request = agent()
+        .get(url)
+        .config()
         .timeout_global(Some(Duration::from_secs(30)))
-        .https_only(true)
         .http_status_as_error(false)
-        .user_agent(concat!("tuiman/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into();
-    let mut request = agent.get(url);
+        .build();
     if let Some(etag) = etag {
         request = request.header("If-None-Match", etag);
     }

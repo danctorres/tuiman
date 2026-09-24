@@ -34,6 +34,9 @@ pub struct Item {
     pub former_repo: Option<String>,
     #[serde(skip)]
     pub manifests: Manifests,
+    /// Tag and asset file names of the latest GitHub release.
+    #[serde(skip)]
+    pub release: Option<(String, Vec<String>)>,
 }
 
 /// Build manifests found at the repository root, used to derive registry names.

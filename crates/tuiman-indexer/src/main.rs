@@ -122,6 +122,7 @@ fn run(args: &Args) -> Result<()> {
         found.extend(registries.into_iter().flat_map(|h| h.join().expect("resolver panicked")));
         found
     });
+    let found = found.into_iter().chain(resolve::release::resolve(&items));
     for (i, eco, package) in found {
         items[i].set_package(eco, &package);
     }

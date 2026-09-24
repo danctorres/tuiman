@@ -25,6 +25,7 @@ fragment F on Repository {
   gomod: object(expression: "HEAD:go.mod") { ... on Blob { text } }
   maingo: object(expression: "HEAD:main.go") { id }
   src: object(expression: "HEAD:src") { ... on Tree { entries { name } } }
+  latestRelease { tagName releaseAssets(first: 100) { nodes { name } } }
 }"#;
 
 /// Fills in GitHub metadata and returns the indices of items whose repository
@@ -136,6 +137,11 @@ fn apply(item: &mut Item, repo: &Value) {
     let src = repo["src"]["entries"].as_array().into_iter().flatten();
     item.manifests.has_rust_bin =
         src.filter_map(|e| e["name"].as_str()).any(|n| n == "main.rs" || n == "bin");
+    let release = &repo["latestRelease"];
+    item.release = release["tagName"].as_str().map(|tag| {
+        let assets = release["releaseAssets"]["nodes"].as_array().into_iter().flatten();
+        (tag.to_owned(), assets.filter_map(|a| a["name"].as_str().map(str::to_owned)).collect())
+    });
 }
 
 #[cfg(test)]
@@ -161,7 +167,8 @@ mod tests {
             "licenseInfo": { "spdxId": "MIT" },
             "cargo": { "text": "[package]\nname = \"bottom\"" },
             "npm": null, "py": null, "gomod": null, "maingo": null,
-            "src": { "entries": [{ "name": "lib.rs" }, { "name": "bin" }] }
+            "src": { "entries": [{ "name": "lib.rs" }, { "name": "bin" }] },
+            "latestRelease": { "tagName": "0.10.2", "releaseAssets": { "nodes": [{ "name": "a.tar.gz" }] } }
         });
         let mut item = Item { repo: Some("old-owner/bottom".into()), ..Item::default() };
         apply(&mut item, &node);
@@ -174,6 +181,7 @@ mod tests {
         assert_eq!((item.language.as_str(), item.license.as_str()), ("Rust", "MIT"));
         assert!(item.manifests.cargo_toml.is_some() && item.manifests.go_mod.is_none());
         assert!(!item.manifests.has_root_main_go && item.manifests.has_rust_bin);
+        assert_eq!(item.release, Some(("0.10.2".into(), vec!["a.tar.gz".into()])));
     }
 
     #[test]
@@ -195,5 +203,6 @@ mod tests {
         apply(&mut item, &node);
         assert_eq!(item.former_repo, None);
         assert_eq!((item.language.as_str(), item.license.as_str()), ("", ""));
+        assert_eq!(item.release, None);
     }
 }
