@@ -22,11 +22,14 @@ Show
 
 Sleep 1.5s
 
-# open the theme picker, search for dracula (the match previews) and pick it
+# open the theme picker, search for dracula (the match previews), close the
+# search and pick it
 Type "t"
 Sleep 1s
 Type "/dra"
 Sleep 1s
+Enter
+Sleep 0.7s
 Enter
 Sleep 1.5s
 
