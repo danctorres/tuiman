@@ -14,7 +14,7 @@ const DEFAULT_URL: &str = "https://raw.githubusercontent.com/danctorres/tuiman/i
 const INDEX_FILE: &str = "index.bin";
 const ETAG_FILE: &str = "index.etag";
 /// The index is rebuilt daily; checking more often than this buys nothing.
-const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
+pub const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The cached catalog, if there is a valid one.
 pub fn load_cached(cache_dir: &Path) -> Option<Catalog> {

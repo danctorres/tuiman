@@ -91,6 +91,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
 
     let input = term::Input::spawn(tx.clone());
     let mut first_frame = true;
+    let mut last_check = Instant::now();
     'main: loop {
         if app.dirty {
             let started = Instant::now();
@@ -158,7 +159,18 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 Err(_) => break,
             }
         };
+        let key = matches!(event, Event::Key(_));
         pending.extend(app.update(event));
+        // A session left open for days re-checks on the next key press, so idle costs nothing.
+        // It runs after the key so an explicit `r` refresh wins and is not swallowed.
+        if key && last_check.elapsed() >= fetch::FRESH_FOR {
+            last_check = Instant::now();
+            app.today_days = today_days();
+            if !app.refreshing {
+                app.begin_quiet_refresh();
+                pending.push_back(Effect::RefreshIndex);
+            }
+        }
         // Drain whatever else is queued (key repeat, bursts of job output) so
         // a backlog costs one frame, not one frame per event.
         while let Ok(event) = rx.try_recv() {
