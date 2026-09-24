@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use tuiman_index::{Catalog, Row};
 
-use crate::managers::{Action, ManagerId, Mask, MANAGERS};
+use crate::managers::{Action, ManagerId, Mask, HOST, MANAGERS};
 
 #[derive(Default)]
 pub struct Installed {
@@ -180,7 +180,11 @@ pub fn impossible(catalog: &Catalog, row: Row, action: Action, page_hint: &str) 
     if action != Action::Install {
         return format!("{name} is not installed through a package manager tuiman knows");
     }
-    let known: Vec<&str> = catalog.packages(row).map(|(eco, _)| eco.name()).collect();
+    let known: Vec<&str> = catalog
+        .packages(row)
+        .filter(|(eco, _)| !eco.is_release() || Some(*eco) == HOST)
+        .map(|(eco, _)| if eco.is_release() { "github" } else { eco.name() })
+        .collect();
     match known.is_empty() {
         true => format!("no known package for {name} ({page_hint})"),
         false => format!("{name} is packaged for {}, none of which is on this machine", known.join(", ")),
@@ -285,6 +289,24 @@ pub mod tests {
             [Choice { manager: by_name("go").unwrap(), package: "github.com/jesseduffield/lazygit".into() }]
         );
         assert!(inst.choices(&c, 1, Action::Uninstall).is_empty());
+    }
+
+    #[test]
+    fn releases_come_after_package_managers() {
+        let github = by_name("github").unwrap();
+        let mut b = Builder::new(0);
+        let packages = [(Ecosystem::Brew, "x"), (MANAGERS[github as usize].eco, "o/x/v1/x-linux-amd64")];
+        b.push(&Entry { name: "x", url: "https://github.com/o/x", packages: &packages, ..Entry::default() })
+            .unwrap();
+        let c = b.finish();
+        let mut inst = Installed::new(detected(&["github", "brew"]), &c);
+        let managers: Vec<_> = inst.choices(&c, 0, Action::Install).iter().map(|c| c.manager).collect();
+        assert_eq!(managers, [by_name("brew").unwrap(), github]);
+
+        inst.set_listing(github, vec!["o/x".into()], &c);
+        assert_eq!(inst.installed_via(0).collect::<Vec<_>>(), ["github"]);
+        let uninstall = inst.choices(&c, 0, Action::Uninstall);
+        assert_eq!(uninstall, [Choice { manager: github, package: "o/x/v1/x-linux-amd64".into() }]);
     }
 
     #[test]

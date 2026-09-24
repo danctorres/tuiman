@@ -102,6 +102,15 @@ on your `PATH` but came from somewhere else (a downloaded release, a script, a
 build from source), and `○` means it can be installed here. tuiman cannot
 uninstall or upgrade a `•` TUI; `enter` on it installs a managed copy.
 
+TUIs that publish prebuilt binaries on GitHub can be installed without a
+package manager: tuiman downloads the release for your platform (Linux or
+macOS, x86_64 or arm64), unpacks it and puts the executables in
+`~/.local/bin`, so make sure that directory is on your `PATH`. It remembers
+what it put there, so `enter` and `u` uninstall and upgrade such a TUI like
+any other. A package manager that carries the TUI is always offered first;
+in the confirmation, the GitHub option is the `tuiman release install ...`
+line, and `--via github` picks it from the command line.
+
 The same core is scriptable:
 
 ```sh
@@ -109,6 +118,7 @@ tuiman list git --min-stars 1000 --installable
 tuiman list --installed
 tuiman install lazygit            # picks the first available manager
 tuiman install lazygit --via go
+tuiman install yazi --via github     # prebuilt release binary into ~/.local/bin
 tuiman uninstall lazygit
 tuiman upgrade lazygit
 tuiman managers                   # which package managers were found

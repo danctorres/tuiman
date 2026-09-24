@@ -24,6 +24,8 @@ usage:
   tuiman upgrade NAME [--via MANAGER]   upgrade an installed TUI
   tuiman refresh                      download the latest index
   tuiman managers                     show the package managers tuiman found
+  tuiman release install|uninstall OWNER/REPO/TAG/ASSET
+                                      what --via github runs: a prebuilt binary into ~/.local/bin
 
 filters:
   --installed            only TUIs that are installed
@@ -55,6 +57,7 @@ pub fn run(args: &[String]) -> CliResult {
         "uninstall" | "remove" | "rm" => change(Action::Uninstall, rest),
         "upgrade" | "up" => change(Action::Upgrade, rest),
         "refresh" | "update" => refresh(),
+        "release" => crate::release::cli(rest),
         "managers" => {
             for (id, bin) in managers::detect() {
                 println!("{:<8} {}", MANAGERS[id as usize].name, bin.display());

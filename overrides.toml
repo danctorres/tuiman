@@ -8,3 +8,5 @@
 # exclude = true                       # leave the entry out of the index
 #
 # Ecosystems: brew crates go npm pypi apt dnf pacman aur nix
+#             release-linux-x64 release-linux-arm64 release-macos-x64 release-macos-arm64
+#             (a release package is owner/repo/tag/asset; it goes stale, so prefer `remove`)

@@ -15,7 +15,7 @@ use std::{env, fs, thread};
 
 use tuiman_index::Ecosystem;
 
-use crate::paths;
+use crate::{paths, release};
 
 /// Index into [`MANAGERS`]; also the bit position in per-row manager masks.
 pub type ManagerId = u8;
@@ -41,7 +41,20 @@ pub struct Manager {
     pub list_installed: fn(&Path) -> Vec<String>,
 }
 
-pub const MANAGERS: [Manager; 12] = [
+/// The release ecosystem this build can run binaries from.
+pub const HOST: Option<Ecosystem> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some(Ecosystem::ReleaseLinuxX64)
+} else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+    Some(Ecosystem::ReleaseLinuxArm64)
+} else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+    Some(Ecosystem::ReleaseMacosX64)
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some(Ecosystem::ReleaseMacosArm64)
+} else {
+    None
+};
+
+pub const MANAGERS: [Manager; 13] = [
     Manager {
         name: "brew",
         bin: "brew",
@@ -176,6 +189,21 @@ pub const MANAGERS: [Manager; 12] = [
         tty: false,
         list_installed: |bin| parse::nix_env_query(&run(bin, &["--query"])),
     },
+    // Last: a package manager is preferred whenever one carries the TUI.
+    Manager {
+        name: "github",
+        bin: "tuiman",
+        eco: match HOST {
+            Some(eco) => eco,
+            None => Ecosystem::ReleaseLinuxX64,
+        },
+        install: &["release", "install", "{pkg}"],
+        uninstall: &["release", "uninstall", "{pkg}"],
+        upgrade: &["release", "install", "{pkg}"],
+        sudo: false,
+        tty: false,
+        list_installed: |_| release::installed(),
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,8 +230,12 @@ pub fn by_name(name: &str) -> Option<ManagerId> {
 impl Manager {
     /// The name this manager's listing uses for `package`. Go only leaves a
     /// binary behind, named after the last path element of the module
-    /// (ignoring a `/vN` major-version suffix).
+    /// (ignoring a `/vN` major-version suffix); a release is filed under its
+    /// repository, whatever tag is current.
     pub fn installed_name<'a>(&self, package: &'a str) -> &'a str {
+        if self.eco.is_release() {
+            return release::repo(package);
+        }
         if self.eco != Ecosystem::Go {
             return package;
         }
@@ -247,9 +279,14 @@ impl Manager {
 /// subprocesses. The walks run in parallel because `PATH` can contain slow
 /// directories (network mounts, WSL's view of the Windows drive), and a
 /// manager that is absent has to be looked for in every one of them.
+/// Releases are handled by tuiman itself, on the platforms the index covers.
 pub fn detect() -> Vec<(ManagerId, PathBuf)> {
+    let find = |m: &Manager| match m.eco.is_release() {
+        true => HOST.and_then(|_| env::current_exe().ok()),
+        false => paths::which(m.bin),
+    };
     thread::scope(|s| {
-        let walks: Vec<_> = MANAGERS.iter().map(|m| s.spawn(|| paths::which(m.bin))).collect();
+        let walks: Vec<_> = MANAGERS.iter().map(|m| s.spawn(move || find(m))).collect();
         let found = walks.into_iter().enumerate();
         found.filter_map(|(id, walk)| Some((id as ManagerId, walk.join().ok()??))).collect()
     })
@@ -264,7 +301,7 @@ fn run(bin: &Path, args: &[&str]) -> String {
     output.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
-fn dir_entries(dir: &Path) -> Vec<String> {
+pub fn dir_entries(dir: &Path) -> Vec<String> {
     let entries = fs::read_dir(dir).into_iter().flatten().flatten();
     entries.filter_map(|e| e.file_name().into_string().ok()).filter(|name| !name.starts_with('.')).collect()
 }
@@ -309,7 +346,7 @@ fn list_npm(bin: &Path) -> Vec<String> {
     dir_entries(&modules).into_iter().flat_map(scoped).collect()
 }
 
-fn data_home() -> Option<PathBuf> {
+pub fn data_home() -> Option<PathBuf> {
     let xdg = env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute());
     xdg.or_else(|| Some(paths::home()?.join(".local/share")))
 }
@@ -369,6 +406,8 @@ mod tests {
         assert_eq!(manager("uv").argv(Action::Upgrade, "posting"), ["uv", "tool", "upgrade", "posting"]);
         let go = manager("go").argv(Action::Install, "github.com/jesseduffield/lazygit");
         assert_eq!(go, ["go", "install", "github.com/jesseduffield/lazygit@latest"]);
+        let release = manager("github").argv(Action::Uninstall, "o/r/v1/r-linux-amd64");
+        assert_eq!(release, ["tuiman", "release", "uninstall", "o/r/v1/r-linux-amd64"]);
     }
 
     #[test]
@@ -385,6 +424,7 @@ mod tests {
         assert_eq!(go.installed_name("github.com/derailed/k9s/v2"), "k9s");
         assert_eq!(go.installed_name("github.com/a/vim"), "vim");
         assert_eq!(manager("brew").installed_name("a/b"), "a/b");
+        assert_eq!(manager("github").installed_name("o/r/v1/r-linux-amd64"), "o/r");
     }
 
     #[test]

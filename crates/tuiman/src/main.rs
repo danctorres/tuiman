@@ -14,6 +14,7 @@ mod installed;
 mod managers;
 mod paths;
 mod query;
+mod release;
 mod term;
 mod theme;
 mod trace;

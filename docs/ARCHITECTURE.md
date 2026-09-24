@@ -55,7 +55,8 @@ flowchart TD
     enriched --> aur[AUR<br/>match by URL]
     enriched --> nix[nixpkgs<br/>match by URL]
     enriched --> reg[crates.io, npm, PyPI, Go<br/>manifest name, verified by registry]
-    brew & aur & nix & reg --> repology[Repology<br/>anchored on URL matches]
+    enriched --> rel[GitHub releases<br/>one asset per platform, by file name]
+    brew & aur & nix & reg & rel --> repology[Repology<br/>anchored on URL matches]
     repology --> distros[apt, dnf, pacman]
     distros --> overrides[overrides.toml]
     overrides --> out[index.bin + index.json]
@@ -71,6 +72,14 @@ Packages are never matched by name alone:
 - **apt, dnf, pacman**: via Repology, whose API has no URLs. A Repology
   project is accepted only if it contains a package already matched by URL in
   the step above.
+- **GitHub releases**: the same GraphQL query returns the latest release's
+  asset names. For each of four platforms (Linux and macOS, x86_64 and arm64)
+  the first asset whose name carries the OS and architecture and is an archive
+  or a bare file is stored as `owner/repo/tag/asset`; packages, checksums and
+  signatures are skipped by extension; static (musl) builds are preferred, then
+  tarballs over zips.
+  These entries go stale with the next release, which the next daily index
+  picks up.
 
 `overrides.toml` holds manual corrections applied last.
 
@@ -107,6 +116,7 @@ scan, package managers, HTTP) runs on worker threads.
 | `managers/` | Static table of package managers. Per-manager behaviour is a function pointer in the table row. |
 | `installed.rs` | Builds two bitmasks per row (available / installed) and caches them for the next start. |
 | `fetch.rs` | Conditional GET of the index, validates it, then atomically replaces the cached file. A failed download leaves the cache unchanged. |
+| `release.rs` | `tuiman release install\|uninstall`: downloads a release asset, unpacks it with `tar`, `unzip` or `bsdtar`, copies the executables into `~/.local/bin` and keeps a manifest per repository under `$XDG_DATA_HOME/tuiman/releases`. The `github` manager row runs it as a subprocess, so it streams into the job log like any other manager. |
 | `trace.rs` | `TUIMAN_TRACE=1` prints startup phase and frame timings on exit. |
 
 Performance targets: first frame under 20 ms with a warm cache, keypress to
@@ -132,12 +142,13 @@ check for a pause request.
 - Control characters and escape sequences are stripped from catalog text and
   job output before drawing.
 - The index is fetched over HTTPS only and limited to 16 MiB
-  (`MAX_INDEX_BYTES`).
+  (`MAX_INDEX_BYTES`). Release assets are fetched from `github.com` over
+  HTTPS only and limited to 256 MiB.
 - The full command is shown and must be confirmed before it runs.
 
 ## Not supported in v1
 
 - Windows
-- Installing from GitHub release assets
+- Release binaries for platforms other than Linux and macOS on x86_64 and arm64
 - Detecting TUIs installed outside a package manager
 - Configuration and theming

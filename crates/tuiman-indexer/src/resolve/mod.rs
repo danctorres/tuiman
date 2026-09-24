@@ -5,6 +5,7 @@
 pub mod brew;
 pub mod bulk;
 pub mod registries;
+pub mod release;
 pub mod repology;
 
 use tuiman_index::Ecosystem;
