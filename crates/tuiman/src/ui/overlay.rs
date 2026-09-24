@@ -85,10 +85,12 @@ pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Optio
     let indent = if search.is_some() { 2 } else { 0 };
     // Keep the selection visible when the list is taller than the screen.
     let first = picker.selected.saturating_sub(inner.height.saturating_sub(1) as usize);
+    let stripe = t.stripe();
     for ((i, item), y) in picker.items.iter().enumerate().skip(first).zip(inner.y..inner.bottom()) {
         let style = match (i == picker.selected, search) {
             (true, Some(Some(_))) => t.searching(),
             (true, _) => t.selected(),
+            _ if i % 2 == 1 => stripe,
             _ => Style::new(),
         };
         buf.set_style(Rect::new(inner.x, y, inner.width, 1), style);
@@ -155,11 +157,14 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
     // Keep the selection visible when the list is taller than the box.
     let list_height = inner.height.saturating_sub(2) as usize;
     let first = help.selected.saturating_sub(list_height.saturating_sub(1));
+    let stripe = t.stripe();
     for ((i, (keys, what)), y) in rows.into_iter().enumerate().skip(first).zip(inner.y + 2..inner.bottom()) {
         let selected = i == help.selected;
         let bar = if filter.is_some() { t.searching() } else { t.selected() };
         if selected {
             buf.set_style(Rect::new(inner.x, y, inner.width, 1), bar);
+        } else if i % 2 == 1 {
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), stripe);
         }
         let keys_style = if selected { bar } else { t.accent() };
         buf.set_stringn(inner.x, y, keys, 16, keys_style);

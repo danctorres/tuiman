@@ -83,7 +83,7 @@ impl Theme {
         }
     }
 
-    /// The background of every other table row: the base background nudged
+    /// The background of every other list row: the base background nudged
     /// towards the foreground. Named palettes cannot blend, so they get none.
     pub fn stripe(&self) -> Style {
         match mix(self.bg, self.fg, 0.06) {
