@@ -2,7 +2,7 @@
 # out of git history: drag a new one into that issue and update the README
 # link. Re-record from the repo root with:
 # vhs docs/demo.tape (it builds and runs target/release/tuiman). Needs brew,
-# neither lazygit nor yazi installed yet, btop installed, and a theme other
+# lazygit not installed yet, btop installed, and a theme other
 # than dracula saved.
 
 Output docs/demo.gif
@@ -42,18 +42,6 @@ Enter
 Sleep 1.5s
 Enter
 Wait+Screen@3m / install lazygit.*finished/
-Sleep 1.5s
-
-# search and install yazi
-Escape
-Type "/yazi"
-Sleep 0.7s
-Enter
-Sleep 1s
-Enter
-Sleep 1.5s
-Enter
-Wait+Screen@3m / install yazi.*finished/
 Sleep 1.5s
 
 # only installed TUIs, then search for btop, uninstall it and clear all filters
