@@ -683,6 +683,21 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         right -= width;
         buf.set_stringn(right, area.y, &text, width as usize, style);
     }
+    // The indexer publishes daily, so an index days old means refreshes are failing.
+    let generated = app.catalog.generated_days();
+    if generated > 0 && !app.refreshing {
+        let age = app.today_days.saturating_sub(generated);
+        let (text, style) = match age {
+            0..=2 => (" ✓ index up to date ".to_owned(), t.dim()),
+            _ => (
+                format!(" ✗ index {} old · r to refresh ", format::age(Some(generated), app.today_days)),
+                Style::new().fg(t.archived),
+            ),
+        };
+        let width = (text.chars().count() as u16).min(right - area.x);
+        right -= width;
+        buf.set_stringn(right, area.y, &text, width as usize, style);
+    }
 
     if !app.status.is_empty() {
         buf.set_stringn(
@@ -1191,5 +1206,20 @@ mod tests {
         assert!(render(&mut app, 100, 24).join("\n").contains("press r to download"));
         app.refreshing = true;
         assert!(render(&mut app, 100, 24).join("\n").contains("Downloading the index"));
+    }
+
+    #[test]
+    fn index_age_shows_in_the_status_bar() {
+        let mut b = tuiman_index::Builder::new(20_000 * 86_400);
+        b.push(&tuiman_index::Entry { name: "btop", url: "https://example.com", ..Default::default() })
+            .unwrap();
+        let c = b.finish();
+        let installed = Installed::new(detected(&[]), &c);
+        let mut app = App::new(c, installed, 20_002);
+        assert!(render(&mut app, 100, 24).join("\n").contains("✓ index up to date"));
+        app.today_days = 20_009;
+        assert!(render(&mut app, 100, 24).join("\n").contains("✗ index 9d old · r to refresh"));
+        app.refreshing = true;
+        assert!(!render(&mut app, 100, 24).join("\n").contains("index 9d old"), "the spinner says it all");
     }
 }

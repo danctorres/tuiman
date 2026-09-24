@@ -146,6 +146,11 @@ impl Catalog {
         Builder::new(0).finish()
     }
 
+    /// Days since the Unix epoch on which the indexer produced this catalog.
+    pub fn generated_days(&self) -> u32 {
+        (self.generated / 86_400) as u32
+    }
+
     pub fn len(&self) -> usize {
         self.name.len()
     }
