@@ -1,6 +1,8 @@
 //! Where tuiman keeps its cache. Everything in it can be deleted at any time.
 
+use std::collections::HashSet;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 /// `$XDG_CACHE_HOME/tuiman` (or `~/.cache/tuiman`) on Linux,
@@ -26,6 +28,18 @@ pub fn home() -> Option<PathBuf> {
 pub fn which(bin: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     env::split_paths(&path).map(|dir| dir.join(bin)).find(|candidate| is_executable(candidate))
+}
+
+/// Every file name in the `PATH` directories. Lists directories only, with no
+/// per-file stat: what sits in a bin directory is an executable in practice.
+pub fn names_on_path() -> HashSet<String> {
+    let path = env::var_os("PATH").unwrap_or_default();
+    let mut seen = HashSet::new();
+    env::split_paths(&path)
+        .filter(|dir| seen.insert(dir.clone()))
+        .filter_map(|dir| fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten().filter_map(|e| e.file_name().into_string().ok()))
+        .collect()
 }
 
 fn is_executable(path: &std::path::Path) -> bool {

@@ -88,7 +88,7 @@ impl View {
             let keep = (query.show_archived || !catalog.is_archived(row))
                 && catalog.stars(row).unwrap_or(0) >= query.min_stars
                 && query.language.is_none_or(|l| l == catalog.language_id(row))
-                && (!query.installed_only || installed.is_installed(row))
+                && (!query.installed_only || installed.is_installed(row) || installed.is_on_path(row))
                 && (!query.installable_only || installed.is_available(row));
             if !keep {
                 continue;

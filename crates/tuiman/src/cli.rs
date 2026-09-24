@@ -98,14 +98,19 @@ fn catalog() -> io::Result<Catalog> {
 /// Scans every detected manager, in parallel, and waits for all of them.
 fn scan_installed(catalog: &Catalog) -> Installed {
     let mut installed = Installed::new(managers::detect(), catalog);
-    let listings: Vec<_> = thread::scope(|s| {
+    let (listings, path_names): (Vec<_>, _) = thread::scope(|s| {
+        let path_names = s.spawn(crate::paths::names_on_path);
         let scans: Vec<_> = installed
             .detected()
             .iter()
             .map(|(id, bin)| s.spawn(move || (*id, (MANAGERS[*id as usize].list_installed)(bin))))
             .collect();
-        scans.into_iter().filter_map(|scan| scan.join().ok()).collect()
+        (
+            scans.into_iter().filter_map(|scan| scan.join().ok()).collect(),
+            path_names.join().unwrap_or_default(),
+        )
     });
+    installed.set_path_names(path_names, catalog);
     for (id, names) in listings {
         installed.set_listing(id, names, catalog);
     }
@@ -166,7 +171,11 @@ fn list(args: &[String]) -> CliResult {
     // `tuiman list | head` closes the pipe early; that is not an error.
     let mut out = BufWriter::new(io::stdout().lock());
     for &row in &view.rows {
-        let mark = if installed.is_installed(row) { '✓' } else { ' ' };
+        let mark = match (installed.is_installed(row), installed.is_on_path(row)) {
+            (true, _) => '✓',
+            (_, true) => '•',
+            _ => ' ',
+        };
         let stars = catalog.stars(row).map_or_else(|| "-".to_owned(), |s| s.to_string());
         let line = writeln!(
             out,

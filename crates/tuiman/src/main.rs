@@ -84,6 +84,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
     let mut pending = VecDeque::new();
     app.detecting = true;
     worker::detect(tx.clone());
+    worker::scan_path(tx.clone());
     if app.catalog.is_empty() || !fetch::is_fresh(&cache_dir) {
         app.begin_quiet_refresh();
         pending.push_back(Effect::RefreshIndex);
