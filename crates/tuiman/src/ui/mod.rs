@@ -190,13 +190,17 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
     // category, which turns the counts into a histogram for nothing.
     let busiest = app.view.category_counts.iter().copied().max().unwrap_or(0).max(1) as usize;
     let meter = t.meter();
-    for ((id, name, count), y) in entries.zip(inner.y..inner.bottom()) {
+    let stripe = t.stripe();
+    for ((i, (id, name, count)), y) in entries.enumerate().zip(inner.y..inner.bottom()) {
         let style = match (id == app.query.category, count) {
             (true, _) => cursor(t, app.sidebar_focused),
             (false, 0) => t.dim(),
             (false, _) => Style::new(),
         };
         let line = Rect::new(inner.x, y, inner.width, 1);
+        if i % 2 == 1 {
+            buf.set_style(line, stripe);
+        }
         buf.set_style(line, style);
         if let (Some(meter), Some(_)) = (meter, id) {
             let width = (count as usize * inner.width as usize / busiest) as u16;
