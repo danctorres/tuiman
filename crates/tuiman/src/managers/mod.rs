@@ -232,7 +232,9 @@ impl Manager {
             Action::Upgrade => self.upgrade,
         };
         let mut argv = Vec::with_capacity(template.len() + 2);
-        if self.sudo && !is_root() {
+        // Containers often run as root with no sudo and no `USER`: the command
+        // then runs as is, and fails with the manager's own permission error if it must.
+        if self.sudo && !is_root() && paths::which("sudo").is_some() {
             argv.push("sudo".to_owned());
         }
         argv.push(self.bin.to_owned());
