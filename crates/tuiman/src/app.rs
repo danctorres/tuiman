@@ -297,6 +297,18 @@ impl App {
                         // Ids are only meaningful within one catalog.
                         self.query.category = None;
                         self.query.language = None;
+                        // So are the rows and ids an open dialog holds, which could now name
+                        // another TUI or none at all.
+                        if matches!(
+                            self.mode,
+                            Mode::CategorySearch { .. }
+                                | Mode::Picker(Picker {
+                                    kind: PickerKind::Confirm { .. } | PickerKind::Language(_),
+                                    ..
+                                })
+                        ) {
+                            self.mode = Mode::Normal;
+                        }
                         self.refilter(false);
                         self.status = format!("Index updated: {} TUIs", self.catalog.len());
                     }
@@ -1404,5 +1416,29 @@ mod tests {
         app.update(Event::Index(IndexUpdate::Fresh(Box::new(catalog()))));
         assert_eq!(app.query.category, None);
         assert!(app.status.contains("6 TUIs"));
+    }
+
+    #[test]
+    fn fresh_index_closes_dialogs_holding_old_rows() {
+        let smaller = || {
+            let mut b = tuiman_index::Builder::new(0);
+            b.push(&tuiman_index::Entry { name: "x", url: "https://x.y", ..Default::default() }).unwrap();
+            Box::new(b.finish())
+        };
+        let mut app = app(&["brew"]);
+        let row = app.selected_row().unwrap();
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.mode, Mode::Picker(_)));
+        app.update(Event::Index(IndexUpdate::Fresh(smaller())));
+        assert_eq!(app.mode, Mode::Normal, "row {row} is gone from the new catalog");
+        assert!(press(&mut app, KeyCode::Enter).is_empty());
+
+        press(&mut app, KeyCode::Char('L'));
+        app.update(Event::Index(IndexUpdate::Fresh(smaller())));
+        assert_eq!(app.mode, Mode::Normal);
+
+        press(&mut app, KeyCode::Char('t'));
+        app.update(Event::Index(IndexUpdate::Fresh(smaller())));
+        assert!(matches!(app.mode, Mode::Picker(_)), "themes do not depend on the catalog");
     }
 }
