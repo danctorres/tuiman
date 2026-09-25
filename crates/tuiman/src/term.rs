@@ -4,9 +4,8 @@
 use std::io::{self, Stdout};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::thread::{self, Thread};
-use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event as TermEvent, KeyEventKind};
@@ -56,55 +55,61 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// How long the input thread waits for a key before checking whether it has
-/// been asked to pause. Bounds the delay before a sudo prompt can appear.
-const POLL: Duration = Duration::from_millis(250);
-
 /// The thread that turns terminal input into [`Event`]s. It must not read the
-/// tty while a child process owns it (it would eat the user's sudo password),
-/// so it can be paused: `pause` returns only once the thread has let go.
+/// tty while a child process owns it (it would eat the user's sudo password).
+/// So it blocks in a plain read, which costs nothing while idle, and after
+/// each key it parks until the main loop has carried out that key's effects
+/// (`ack`): a pause, which only ever follows a key, then finds the tty free.
 pub struct Input {
     paused: Arc<AtomicBool>,
-    tty: Arc<Mutex<()>>,
+    acked: Arc<AtomicBool>,
     thread: Thread,
 }
 
 impl Input {
     pub fn spawn(tx: Sender<Event>) -> Input {
         let paused = Arc::new(AtomicBool::new(false));
-        let tty = Arc::new(Mutex::new(()));
-        let (paused_in, tty_in) = (Arc::clone(&paused), Arc::clone(&tty));
+        let acked = Arc::new(AtomicBool::new(false));
+        let (paused_in, acked_in) = (Arc::clone(&paused), Arc::clone(&acked));
         let handle = thread::spawn(move || loop {
-            if paused_in.load(Ordering::Acquire) {
+            // Parks are looped on a flag, so a spurious wake-up never reads the tty.
+            while paused_in.load(Ordering::Acquire) {
                 thread::park();
-                continue;
             }
-            let _tty = tty_in.lock().unwrap_or_else(|e| e.into_inner());
-            let event = match event::poll(POLL) {
-                Ok(true) => event::read(),
-                Ok(false) => continue,
-                Err(e) => Err(e),
-            };
-            let sent = match event {
-                Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => tx.send(Event::Key(key)),
-                Ok(TermEvent::Resize(..)) => tx.send(Event::Resize),
-                Ok(_) => Ok(()),
+            match event::read() {
+                Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => {
+                    if tx.send(Event::Key(key)).is_err() {
+                        break;
+                    }
+                    while !acked_in.swap(false, Ordering::AcqRel) {
+                        thread::park();
+                    }
+                }
+                Ok(TermEvent::Resize(..)) => {
+                    if tx.send(Event::Resize).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
                 Err(_) => break,
-            };
-            if sent.is_err() {
-                break;
             }
         });
-        Input { paused, tty, thread: handle.thread().clone() }
+        Input { paused, acked, thread: handle.thread().clone() }
     }
 
-    pub fn pause(&self) -> MutexGuard<'_, ()> {
+    /// The effects of the last key have been carried out; the thread may read again.
+    pub fn ack(&self) {
+        self.acked.store(true, Ordering::Release);
+        self.thread.unpark();
+    }
+
+    /// Keeps the thread off the tty. Only valid between a key and its `ack`,
+    /// which is where every terminal job starts.
+    pub fn pause(&self) {
         self.paused.store(true, Ordering::Release);
-        self.tty.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn resume(&self, guard: MutexGuard<'_, ()>) {
-        drop(guard);
+    pub fn resume(&self) {
         self.paused.store(false, Ordering::Release);
         self.thread.unpark();
     }

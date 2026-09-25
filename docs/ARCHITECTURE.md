@@ -129,9 +129,9 @@ they run in the real terminal: tuiman leaves the alternate screen, runs the
 command with inherited stdio, then restores the UI.
 
 The input thread must not read the tty during this, or it would consume the
-sudo password. `term::Input::pause` blocks until the input thread has
-released the tty. To support this, the input thread wakes every 250 ms to
-check for a pause request.
+sudo password. After delivering a key it parks until the main loop has carried
+out that key's effects, so a pause (which always follows a key) finds the tty
+free. Between keys it blocks in a plain read: an idle tuiman never wakes up.
 
 ## Security
 

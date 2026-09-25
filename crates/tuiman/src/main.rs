@@ -94,6 +94,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
     let input = term::Input::spawn(tx.clone());
     let mut first_frame = true;
     let mut last_check = Instant::now();
+    let mut key_pending = false;
     'main: loop {
         if app.dirty {
             let started = Instant::now();
@@ -137,13 +138,17 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                     app.dirty = true;
                 }
                 Effect::RunInTerminal(job) => {
-                    let guard = input.pause();
+                    input.pause();
                     let ok = run_in_terminal(&job);
                     terminal = term::enter()?;
-                    input.resume(guard);
+                    input.resume();
                     pending.extend(app.terminal_job_finished(&job, ok));
                 }
             }
+        }
+        // The key's effects are done, including any pause: the input thread may read on.
+        if std::mem::take(&mut key_pending) {
+            input.ack();
         }
         if app.dirty {
             continue;
@@ -162,6 +167,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
             }
         };
         let key = matches!(event, Event::Key(_));
+        key_pending |= key;
         pending.extend(app.update(event));
         // A session left open for days re-checks on the next key press, so idle costs nothing.
         // It runs after the key so an explicit `r` refresh wins and is not swallowed.
@@ -176,6 +182,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
         // Drain whatever else is queued (key repeat, bursts of job output) so
         // a backlog costs one frame, not one frame per event.
         while let Ok(event) = rx.try_recv() {
+            key_pending |= matches!(event, Event::Key(_));
             pending.extend(app.update(event));
         }
     }
