@@ -30,7 +30,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tuiman_index::Catalog;
 
-use crate::app::{App, Effect, Event, Job};
+use crate::app::{App, Effect, Event, Job, Press};
 use crate::installed::Installed;
 use crate::trace::Trace;
 
@@ -100,7 +100,9 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
             let started = Instant::now();
             let (page, sidebar) = ui::layout(terminal.size()?.into());
             app.set_layout(page, sidebar);
-            terminal.draw(|frame| ui::draw(frame, &app))?;
+            let mut hits = ui::Hits::default();
+            terminal.draw(|frame| hits = ui::draw(frame, &app))?;
+            app.hits = hits;
             app.dirty = false;
             trace.frame(started.elapsed());
             if std::mem::take(&mut first_frame) {
@@ -146,7 +148,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 }
             }
         }
-        // The key's effects are done, including any pause: the input thread may read on.
+        // The key's or click's effects are done, including any pause: the input thread may read on.
         if std::mem::take(&mut key_pending) {
             input.ack();
         }
@@ -154,7 +156,7 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
             continue;
         }
 
-        let event = if app.busy() {
+        let mut event = if app.busy() {
             match rx.recv_timeout(TICK) {
                 Ok(event) => event,
                 Err(RecvTimeoutError::Timeout) => Event::Tick,
@@ -166,9 +168,27 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 Err(_) => break,
             }
         };
-        let key = matches!(event, Event::Key(_));
-        key_pending |= key;
-        pending.extend(app.update(event));
+        let key = event.needs_ack();
+        // Drain whatever else is queued (key repeat, bursts of job output) so
+        // a backlog costs one frame, not one frame per event. Wheel notches
+        // add up, so a fast spin is one step of its size, not a query per notch.
+        loop {
+            let next = rx.try_recv();
+            if let (
+                Event::Mouse { press: Press::Wheel(n), .. },
+                Ok(Event::Mouse { press: Press::Wheel(m), .. }),
+            ) = (&mut event, &next)
+            {
+                *n += *m;
+                continue;
+            }
+            key_pending |= event.needs_ack();
+            pending.extend(app.update(event));
+            match next {
+                Ok(next) => event = next,
+                Err(_) => break,
+            }
+        }
         // A session left open for days re-checks on the next key press, so idle costs nothing.
         // It runs after the key so an explicit `r` refresh wins and is not swallowed.
         if key && last_check.elapsed() >= fetch::FRESH_FOR {
@@ -178,12 +198,6 @@ fn tui(mut trace: Trace) -> io::Result<ExitCode> {
                 app.begin_quiet_refresh();
                 pending.push_back(Effect::RefreshIndex);
             }
-        }
-        // Drain whatever else is queued (key repeat, bursts of job output) so
-        // a backlog costs one frame, not one frame per event.
-        while let Ok(event) = rx.try_recv() {
-            key_pending |= matches!(event, Event::Key(_));
-            pending.extend(app.update(event));
         }
     }
 

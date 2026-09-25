@@ -47,6 +47,8 @@ pub struct Query {
     pub installable_only: bool,
     pub show_archived: bool,
     pub sort: Sort,
+    /// The chosen column the other way round: fewest stars, oldest, or Z to A.
+    pub reverse: bool,
 }
 
 /// Result of running a query, plus the scratch space to run the next one.
@@ -129,6 +131,7 @@ impl View {
                 Sort::Name => name(a).cmp(name(b)),
                 Sort::Updated => pushed(a).cmp(&pushed(b)),
             };
+            let chosen = if query.reverse { chosen.reverse() } else { chosen };
             tier(a).cmp(&tier(b)).then(chosen).then(relevance(a).cmp(&relevance(b))).then(a.cmp(&b))
         });
     }

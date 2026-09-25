@@ -14,14 +14,23 @@ use crate::installed::{self, Choice, Installed};
 use crate::managers::{Action, ManagerId, MANAGERS};
 use crate::query::{Query, View};
 use crate::theme::{Theme, THEMES};
+use crate::ui::{Hits, Target};
 
 const LOG_LINES: usize = 2000;
+/// Rows the table moves per wheel step; the shorter lists move one.
+const WHEEL_ROWS: isize = 3;
 /// How long the hint for a pressed key stays lit: about a second of 80 ms ticks.
 pub const FLASH_TICKS: u8 = 14;
 pub const STAR_PRESETS: [u32; 7] = [0, 100, 500, 1_000, 5_000, 10_000, 50_000];
 
 pub enum Event {
     Key(KeyEvent),
+    /// A click or a wheel step at a cell; resolved against [`App::hits`].
+    Mouse {
+        x: u16,
+        y: u16,
+        press: Press,
+    },
     Resize,
     /// The `PATH` walk for package managers finished.
     Detected(Vec<(ManagerId, std::path::PathBuf)>),
@@ -36,6 +45,18 @@ pub enum Event {
     },
     /// Drives the spinner; only sent while something is in flight.
     Tick,
+}
+
+impl Event {
+    /// Whether the input thread waits for the main loop to act on this before
+    /// it reads again: keys and clicks can start a job that takes the terminal.
+    pub fn needs_ack(&self) -> bool {
+        match self {
+            Event::Key(_) => true,
+            Event::Mouse { press, .. } => !matches!(press, Press::Wheel(_)),
+            _ => false,
+        }
+    }
 }
 
 pub enum IndexUpdate {
@@ -96,7 +117,7 @@ pub struct Help {
     pub selected: usize,
 }
 
-pub const HELP: [(&str, &str); 24] = [
+pub const HELP: [(&str, &str); 26] = [
     ("h l ← →", "focus categories / list"),
     ("j k ↓ ↑", "move in the focused panel"),
     ("gg G", "first / last, 3gg row 3"),
@@ -121,6 +142,8 @@ pub const HELP: [(&str, &str); 24] = [
     ("?", "this help"),
     ("q", "quit"),
     ("c", "clear all filters"),
+    ("click · wheel", "select; a header orders · move any list"),
+    ("2× · right-click", "install or uninstall · open project page"),
 ];
 
 impl Help {
@@ -190,6 +213,12 @@ pub struct App {
     pub sidebar_focused: bool,
     /// The layout has room for the sidebar; reported by the shell.
     pub sidebar_visible: bool,
+    /// Where the last frame put things; reported by the shell.
+    pub hits: Hits,
+    /// What the last left click landed on, which a double click must repeat.
+    clicked: Option<Target>,
+    /// Lines the job log is scrolled back from its tail.
+    pub log_back: usize,
     /// Digits typed so far, repeating the next motion as in vim's `3j`.
     pub count: usize,
     /// The count before a first `g`, waiting for the second one of `gg`.
@@ -225,6 +254,9 @@ impl App {
             theme: 0,
             sidebar_focused: false,
             sidebar_visible: true,
+            hits: Hits::default(),
+            clicked: None,
+            log_back: 0,
             count: 0,
             g_pending: None,
             last_key: String::new(),
@@ -258,8 +290,12 @@ impl App {
     }
 
     pub fn update(&mut self, event: Event) -> Vec<Effect> {
-        self.dirty = true;
+        // Only a press that changes something redraws; the wheel over nothing is free.
+        if !matches!(event, Event::Mouse { .. }) {
+            self.dirty = true;
+        }
         match event {
+            Event::Mouse { x, y, press } => return self.on_mouse(self.hits.at(x, y), press),
             Event::Key(key) => {
                 let effects = self.on_key(key);
                 // With a search box open the lit hint is hidden or replaced, so its
@@ -465,6 +501,146 @@ impl App {
         }
     }
 
+    /// Install the selected TUI, or uninstall it if it is installed.
+    fn toggle_install(&mut self) {
+        match self.selected_row().is_some_and(|row| self.installed.is_installed(row)) {
+            true => self.open_confirm(Action::Uninstall),
+            false => self.open_confirm(Action::Install),
+        }
+    }
+
+    /// A click selects what it lands on and a double click does what enter
+    /// would; a right click opens a row's project page, a header click sorts
+    /// by it; the wheel moves through whichever list it is over.
+    fn on_mouse(&mut self, target: Target, press: Press) -> Vec<Effect> {
+        // A double click has to land where its first click did; a second click
+        // that only closed the log, or hit another line, is a single click.
+        let press = match press {
+            Press::Act if self.clicked != Some(target) => Press::Select,
+            press => press,
+        };
+        self.clicked = (press == Press::Select).then_some(target);
+        match self.mode {
+            Mode::Help(_) | Mode::Picker(_) => return self.on_overlay_mouse(target, press),
+            // The wheel reads back through the log; any click closes these, as any key does.
+            Mode::Log | Mode::Quit => {
+                match press {
+                    Press::Wheel(n) if self.mode == Mode::Log => {
+                        let back = self.log_back.saturating_add_signed(-n * WHEEL_ROWS);
+                        let back = back.min(self.log.len().saturating_sub(1));
+                        self.dirty |= back != self.log_back;
+                        self.log_back = back;
+                    }
+                    Press::Wheel(_) => {}
+                    _ => {
+                        self.mode = Mode::Normal;
+                        self.clicked = None;
+                        self.dirty = true;
+                    }
+                }
+                return Vec::new();
+            }
+            Mode::Normal | Mode::Search | Mode::CategorySearch { .. } => {}
+        }
+        let mut effects = Vec::new();
+        match (target, press) {
+            (Target::Table(_), Press::Wheel(n)) => self.move_by(n * WHEEL_ROWS),
+            (Target::Sidebar(_), Press::Wheel(n)) => self.step_category(n, false),
+            // A click ends a search, keeping what it typed, as enter does.
+            (Target::Table(i), Press::Select | Press::Act | Press::Open) if i < self.view.rows.len() => {
+                self.status.clear();
+                self.mode = Mode::Normal;
+                self.sidebar_focused = false;
+                self.selected = i;
+                self.scroll_into_view();
+                match press {
+                    Press::Open => {
+                        effects.push(Effect::OpenUrl(self.catalog.url(self.view.rows[i]).to_owned()))
+                    }
+                    Press::Act => self.toggle_install(),
+                    _ => {}
+                }
+            }
+            (Target::Sidebar(i), Press::Select | Press::Act) if i <= self.catalog.category_count() => {
+                self.status.clear();
+                self.mode = Mode::Normal;
+                self.sidebar_focused = true;
+                let current = self.query.category.map_or(0, |c| c as isize + 1);
+                self.step_category(i as isize - current, false);
+            }
+            (Target::Language, Press::Select | Press::Act) => {
+                self.status.clear();
+                self.mode = Mode::Normal;
+                self.open_language_picker();
+            }
+            // The column's natural order first, the other way round on the next click.
+            (Target::Header(sort), Press::Select | Press::Act) => {
+                self.status.clear();
+                self.mode = Mode::Normal;
+                self.query.reverse = sort == self.query.sort && !self.query.reverse;
+                self.query.sort = sort;
+                self.refilter(false);
+            }
+            _ => return effects,
+        }
+        self.dirty = true;
+        effects
+    }
+
+    fn on_overlay_mouse(&mut self, target: Target, press: Press) -> Vec<Effect> {
+        let (selected, len) = match &self.mode {
+            Mode::Help(help) => (help.selected, help.rows().count()),
+            Mode::Picker(picker) => (picker.selected, picker.items.len()),
+            _ => return Vec::new(),
+        };
+        let to = match (target, press) {
+            (Target::Overlay(_), Press::Wheel(n)) => {
+                selected.saturating_add_signed(n).min(len.saturating_sub(1))
+            }
+            (Target::Overlay(Some(i)), Press::Select) if i < len => i,
+            (Target::Overlay(Some(i)), Press::Act) if i < len => {
+                self.select_item(i);
+                self.dirty = true;
+                return match self.mode {
+                    Mode::Help(_) => self.on_help_key(KeyCode::Enter, false, 0),
+                    _ => self.on_picker_key(KeyCode::Enter, false, 0),
+                };
+            }
+            (Target::None, Press::Select | Press::Act) => {
+                self.close_overlay();
+                self.dirty = true;
+                return Vec::new();
+            }
+            _ => return Vec::new(),
+        };
+        self.select_item(to);
+        self.dirty = true;
+        Vec::new()
+    }
+
+    /// Moves the open overlay's selection, previewing a theme as the keys do;
+    /// a theme search that matches nothing shows the saved theme.
+    fn select_item(&mut self, to: usize) {
+        match &mut self.mode {
+            Mode::Help(help) => help.selected = to,
+            Mode::Picker(picker) => {
+                picker.selected = to;
+                if let PickerKind::Theme { ids, original, .. } = &picker.kind {
+                    self.theme = ids.get(to).copied().unwrap_or(*original);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Cancels a picker, undoing a theme preview, or closes the help.
+    fn close_overlay(&mut self) {
+        if let Mode::Picker(Picker { kind: PickerKind::Theme { original, .. }, .. }) = self.mode {
+            self.theme = original;
+        }
+        self.mode = Mode::Normal;
+    }
+
     /// Digits are a count wherever they are not being typed into a search.
     fn takes_count(&self) -> bool {
         match &self.mode {
@@ -547,11 +723,12 @@ impl App {
                 self.refilter(true);
             }
             KeyCode::Char('c') => {
-                self.query = Query { sort: self.query.sort, ..Query::default() };
+                self.query = Query { sort: self.query.sort, reverse: self.query.reverse, ..Query::default() };
                 self.refilter(true);
             }
             KeyCode::Char('s') => {
                 self.query.sort = self.query.sort.next();
+                self.query.reverse = false;
                 // A new order is read from the top, not from wherever the old row went.
                 self.refilter(false);
             }
@@ -569,10 +746,7 @@ impl App {
             }
             KeyCode::Char('*') => self.open_stars_picker(),
             KeyCode::Char('L') => self.open_language_picker(),
-            KeyCode::Enter => match self.selected_row().is_some_and(|row| self.installed.is_installed(row)) {
-                true => self.open_confirm(Action::Uninstall),
-                false => self.open_confirm(Action::Install),
-            },
+            KeyCode::Enter => self.toggle_install(),
             KeyCode::Char('u') => self.open_confirm(Action::Upgrade),
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_row() {
@@ -589,7 +763,10 @@ impl App {
                 self.status = "Refreshing index…".into();
                 return vec![Effect::RefreshIndex];
             }
-            KeyCode::Char('v') => self.mode = Mode::Log,
+            KeyCode::Char('v') => {
+                self.log_back = 0;
+                self.mode = Mode::Log;
+            }
             KeyCode::Char('t') => self.mode = Mode::Picker(self.theme_picker(self.theme, None)),
             KeyCode::Char('?') => self.mode = Mode::Help(Help::default()),
             _ => {}
@@ -794,17 +971,16 @@ impl App {
             if edited {
                 let (original, filter) = (*original, filter.clone());
                 let picker = self.theme_picker(original, filter);
-                if let PickerKind::Theme { ids, .. } = &picker.kind {
-                    self.theme = ids.get(picker.selected).copied().unwrap_or(original);
-                }
+                let selected = picker.selected;
                 self.mode = Mode::Picker(picker);
+                self.select_item(selected);
                 return Vec::new();
             }
         }
         let page = self.page;
         let Mode::Picker(picker) = &mut self.mode else { return Vec::new() };
         match list_motion(code, false, picker.selected, picker.items.len(), page, count) {
-            Some(to) => picker.selected = to,
+            Some(to) => self.select_item(to),
             None => match code {
                 // Only a confirmation reads y as yes; the other pickers copy what is selected.
                 KeyCode::Char('y') if !matches!(picker.kind, PickerKind::Confirm { .. }) => {
@@ -824,19 +1000,11 @@ impl App {
                     return self.on_picked(picker);
                 }
                 KeyCode::Esc | KeyCode::Char('q' | 'n') => {
-                    if let PickerKind::Theme { original, .. } = picker.kind {
-                        self.theme = original;
-                    }
-                    self.mode = Mode::Normal;
+                    self.close_overlay();
                     return Vec::new();
                 }
                 _ => {}
             },
-        }
-        if let PickerKind::Theme { ids, .. } = &picker.kind {
-            if let Some(&id) = ids.get(picker.selected) {
-                self.theme = id;
-            }
         }
         Vec::new()
     }
@@ -894,6 +1062,20 @@ impl App {
         };
         self.rescan(Some(job.manager))
     }
+}
+
+/// What a mouse event asks for. The shell reads the buttons and the clock:
+/// it turns a second left click on the same line, soon after the first,
+/// into `Act`, which the pure core could not time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Press {
+    /// A left click.
+    Select,
+    /// A double click.
+    Act,
+    /// A right click.
+    Open,
+    Wheel(isize),
 }
 
 /// Moves in an overlay's list of `len` rows, shared by help and the pickers.
@@ -961,6 +1143,7 @@ mod tests {
     use super::*;
     use crate::installed::tests::{catalog, detected};
     use crate::managers::by_name;
+    use crate::query::Sort;
 
     fn app(managers: &[&str]) -> App {
         let c = catalog();
@@ -1480,6 +1663,101 @@ mod tests {
         app.update(Event::Index(IndexUpdate::Fresh(Box::new(catalog()))));
         assert_eq!(app.query.category, None);
         assert!(app.status.contains("6 TUIs"));
+    }
+
+    #[test]
+    fn mouse_selects_then_acts_and_wheel_moves() {
+        use ratatui::layout::Rect;
+        let mut app = app(&["brew"]);
+        app.hits = Hits {
+            categories: Rect::new(0, 0, 20, 10),
+            rows: Rect::new(20, 0, 40, 10),
+            header: [
+                (Rect::new(20, 12, 10, 1), Sort::Name),
+                (Rect::new(31, 12, 6, 1), Sort::Stars),
+                (Rect::default(), Sort::Updated),
+            ],
+            ..Hits::default()
+        };
+        let mouse = |app: &mut App, press, x, y| app.update(Event::Mouse { x, y, press });
+        let click = Press::Select;
+
+        mouse(&mut app, click, 25, 1);
+        assert_eq!((app.selected, app.sidebar_focused), (1, false));
+        mouse(&mut app, Press::Wheel(1), 25, 9);
+        assert_eq!(app.selected, 4, "three rows per wheel step, from any line of the table");
+        mouse(&mut app, Press::Wheel(-1), 25, 9);
+        assert_eq!(app.selected, 1);
+        mouse(&mut app, click, 25, 9);
+        assert_eq!(app.selected, 1, "a click below the last row is ignored");
+        let effects = mouse(&mut app, Press::Open, 25, 3);
+        let url = app.catalog.url(app.selected_row().unwrap()).to_owned();
+        assert_eq!((app.selected, effects), (3, vec![Effect::OpenUrl(url)]), "right-click selects and opens");
+        mouse(&mut app, click, 22, 12);
+        assert_eq!((app.query.sort, app.selected), (Sort::Name, 0), "a header click sorts, from the top");
+        assert_eq!((app.query.reverse, selected_name(&app)), (false, "bottom"));
+        mouse(&mut app, click, 22, 12);
+        assert_eq!(
+            (app.query.reverse, selected_name(&app)),
+            (true, "ratatui"),
+            "the same header again reverses"
+        );
+        mouse(&mut app, click, 33, 12);
+        assert_eq!((app.query.sort, app.query.reverse), (Sort::Stars, false), "another column starts afresh");
+        mouse(&mut app, click, 33, 12);
+        press(&mut app, KeyCode::Char('s'));
+        assert!(!app.query.reverse, "s cycles the columns in their natural order");
+        mouse(&mut app, click, 45, 12);
+        assert_eq!(app.query.sort, Sort::Updated, "past the last header is nothing");
+
+        mouse(&mut app, click, 5, 2);
+        assert_eq!((app.query.category, app.sidebar_focused), (Some(1), true));
+        mouse(&mut app, Press::Wheel(-1), 5, 8);
+        assert_eq!(app.query.category, Some(0));
+
+        press(&mut app, KeyCode::Char('c'));
+        mouse(&mut app, click, 25, 2);
+        assert_eq!((app.selected, selected_name(&app)), (2, "btop"));
+        mouse(&mut app, click, 25, 2);
+        assert_eq!(app.mode, Mode::Normal, "a second single click only selects");
+        mouse(&mut app, Press::Act, 25, 1);
+        assert_eq!(
+            (app.selected, &app.mode),
+            (1, &Mode::Normal),
+            "a double click on another row only selects"
+        );
+        mouse(&mut app, Press::Act, 25, 1);
+        assert!(matches!(&app.mode, Mode::Picker(p) if matches!(p.kind, PickerKind::Confirm { .. })));
+        assert_eq!(app.selected, 1, "a double click acts on the row its first click selected");
+
+        // The overlay is what the last frame drew; here, a box at the top left.
+        app.hits.overlay = Rect::new(0, 0, 30, 6);
+        app.hits.list = Rect::new(1, 2, 28, 3);
+        mouse(&mut app, click, 40, 8);
+        assert_eq!(app.mode, Mode::Normal, "a click outside cancels");
+
+        press(&mut app, KeyCode::Char('v'));
+        app.dirty = false;
+        mouse(&mut app, Press::Wheel(1), 40, 8);
+        assert!(!app.dirty, "an empty log has nothing to scroll");
+        mouse(&mut app, click, 40, 8);
+        assert_eq!(app.mode, Mode::Normal, "a click closes the log");
+        mouse(&mut app, Press::Act, 25, 3);
+        assert_eq!(app.mode, Mode::Normal, "the click that closed the log does not count towards a double");
+        app.hits.overlay = Rect::default();
+
+        press(&mut app, KeyCode::Char('t'));
+        app.hits.overlay = Rect::new(0, 0, 30, 6);
+        mouse(&mut app, Press::Wheel(1), 1, 1);
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == 1));
+        assert_eq!(app.theme, 1, "the wheel previews themes too");
+        mouse(&mut app, click, 5, 4);
+        assert!(matches!(&app.mode, Mode::Picker(p) if p.selected == 2));
+        let effects = mouse(&mut app, Press::Act, 5, 4);
+        assert_eq!(
+            (effects, &app.mode, app.theme),
+            (vec![Effect::SaveTheme(THEMES[2].name)], &Mode::Normal, 2)
+        );
     }
 
     #[test]

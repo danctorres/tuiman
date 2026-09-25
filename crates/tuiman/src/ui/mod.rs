@@ -11,7 +11,7 @@ mod overlay;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Widget, Wrap};
@@ -19,7 +19,7 @@ use ratatui::Frame;
 use tuiman_index::Row;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Mode, FLASH_TICKS};
+use crate::app::{App, Mode, PickerKind, FLASH_TICKS};
 use crate::managers::{HOST, MANAGERS};
 use crate::query::Sort;
 use crate::theme::Theme;
@@ -118,16 +118,79 @@ pub fn layout(area: Rect) -> (usize, bool) {
     (areas.table.height.saturating_sub(3) as usize, !areas.sidebar.is_empty())
 }
 
-pub fn draw(frame: &mut Frame, app: &App) {
+/// Where the last frame put what a mouse can land on. A click or wheel step
+/// is resolved against what is actually on screen, so `draw` records this
+/// rather than the layout being computed a second time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hits {
+    /// The sidebar's lines, All first.
+    pub categories: Rect,
+    /// The table's body lines; the first one shows row `offset`.
+    pub rows: Rect,
+    pub offset: usize,
+    /// The sortable column headers, empty where the layout dropped one.
+    pub header: [(Rect, Sort); 3],
+    /// The LANGUAGE header, which the language menu drops down from.
+    pub language: Rect,
+    /// The open overlay's box, and the list lines inside it, the first showing item `first`.
+    pub overlay: Rect,
+    pub list: Rect,
+    pub first: usize,
+}
+
+/// What is under the mouse. An index may run past the end of its list: the
+/// blank lines below a short list still take the wheel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Sidebar(usize),
+    Table(usize),
+    /// A column header, which sorts by that column.
+    Header(Sort),
+    /// The LANGUAGE header, which opens the language menu.
+    Language,
+    /// Inside the overlay; on its list at this index, or beside it.
+    Overlay(Option<usize>),
+    None,
+}
+
+impl Hits {
+    pub fn at(&self, x: u16, y: u16) -> Target {
+        let pos = Position::new(x, y);
+        let line = |rect: Rect| (y - rect.y) as usize;
+        if !self.overlay.is_empty() {
+            return match (self.overlay.contains(pos), self.list.contains(pos)) {
+                (_, true) => Target::Overlay(Some(self.first + line(self.list))),
+                (true, false) => Target::Overlay(None),
+                (false, false) => Target::None,
+            };
+        }
+        if self.categories.contains(pos) {
+            Target::Sidebar(line(self.categories))
+        } else if self.rows.contains(pos) {
+            Target::Table(self.offset + line(self.rows))
+        } else if let Some(&(_, sort)) = self.header.iter().find(|(rect, _)| rect.contains(pos)) {
+            Target::Header(sort)
+        } else if self.language.contains(pos) {
+            Target::Language
+        } else {
+            Target::None
+        }
+    }
+}
+
+pub fn draw(frame: &mut Frame, app: &App) -> Hits {
     let area = frame.area();
     let areas = areas(area);
     let buf = frame.buffer_mut();
     buf.set_style(area, app.theme().base());
+    let header =
+        [(Rect::default(), Sort::Name), (Rect::default(), Sort::Stars), (Rect::default(), Sort::Updated)];
+    let mut hits = Hits { offset: app.offset, header, ..Hits::default() };
 
     if !areas.sidebar.is_empty() {
-        sidebar(buf, areas.sidebar, app);
+        hits.categories = sidebar(buf, areas.sidebar, app);
     }
-    table(buf, areas.table, app);
+    table(buf, areas.table, app, &mut hits);
     if !areas.details.is_empty() {
         details(buf, areas.details, app);
     }
@@ -139,8 +202,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
         dim_backdrop(buf, area, app.theme());
     }
     let mut cursor = match &app.mode {
-        Mode::Picker(picker) => overlay::picker(buf, area, picker, app.theme()),
-        Mode::Help(help) => overlay::help(buf, area, app.theme(), help),
+        Mode::Picker(picker) => {
+            // The language menu drops down from its column, when the layout shows one.
+            let anchor = match picker.kind {
+                PickerKind::Language(_) => Some(hits.language).filter(|r| !r.is_empty()),
+                _ => None,
+            };
+            overlay::picker(buf, area, picker, app.theme(), &mut hits, anchor)
+        }
+        Mode::Help(help) => overlay::help(buf, area, app.theme(), help, &mut hits),
         Mode::Log => {
             overlay::log(buf, area, app);
             None
@@ -166,9 +236,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(pos) = cursor {
         frame.set_cursor_position(pos);
     }
+    hits
 }
 
-fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
+/// Returns the lines the categories were drawn on.
+fn sidebar(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     let t = app.theme();
     let title = match &app.mode {
         Mode::CategorySearch { text, .. } => search_title(text, true, t),
@@ -233,6 +305,7 @@ fn sidebar(buf: &mut Buffer, area: Rect, app: &App) {
             lit_sub(buf, y, col, &name.to_lowercase(), &text.to_lowercase(), on_bar, t);
         }
     }
+    inner
 }
 
 /// Column x-offsets and widths for a given inner table width.
@@ -267,7 +340,8 @@ impl Columns {
     }
 }
 
-fn table(buf: &mut Buffer, area: Rect, app: &App) {
+/// Records the header and row lines it drew in `hits`.
+fn table(buf: &mut Buffer, area: Rect, app: &App, hits: &mut Hits) {
     let t = app.theme();
     let title = match (&app.mode, app.query.text.is_empty()) {
         (Mode::Search, _) => search_title(&app.query.text, true, t),
@@ -285,9 +359,15 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
     }
 
     let cols = Columns::new(inner.width, app.view.rows.len());
+    let span = |col: (u16, u16)| Rect::new(inner.x + col.0, inner.y, col.1, 1);
+    hits.header[0].0 = span(cols.name);
+    hits.header[1].0 = span(cols.stars);
+    hits.header[2].0 = cols.age.map(span).unwrap_or_default();
+    hits.language = cols.language.map(span).unwrap_or_default();
     // The sorted column's header is the one bright thing in the header row.
+    let arrow = if app.query.reverse { "▴" } else { "▾" };
     let header = |label: &str, sort: Sort| match sort == app.query.sort {
-        true => (format!("{label} ▾"), t.accent().patch(BOLD)),
+        true => (format!("{label} {arrow}"), t.accent().patch(BOLD)),
         false => (label.to_owned(), t.dim()),
     };
     let put = |buf: &mut Buffer, y, (x, w): (u16, u16), text: &str, style| {
@@ -326,7 +406,9 @@ fn table(buf: &mut Buffer, area: Rect, app: &App) {
         "" => None,
         text => Some(Pattern::parse(text, CaseMatching::Ignore, Normalization::Smart)),
     };
-    let body = (inner.y + 1..inner.bottom()).zip(app.view.rows.iter().enumerate().skip(app.offset));
+    let lines = Rect { y: inner.y + 1, height: inner.height - 1, ..inner };
+    hits.rows = lines;
+    let body = (lines.y..lines.bottom()).zip(app.view.rows.iter().enumerate().skip(app.offset));
     for (y, (i, &row)) in body {
         let cat = &app.catalog;
         let selected = i == app.selected;
@@ -571,8 +653,11 @@ fn cursor(t: &Theme, focused: bool) -> Style {
 /// Active filters, shown right-aligned in the table border.
 fn filters(app: &App) -> Line<'static> {
     let q = &app.query;
-    let mut parts =
-        vec![format!("{}/{}", app.view.rows.len(), app.catalog.len()), format!("sort:{}", q.sort.label())];
+    let arrow = if q.reverse { "↑" } else { "" };
+    let mut parts = vec![
+        format!("{}/{}", app.view.rows.len(), app.catalog.len()),
+        format!("sort:{}{arrow}", q.sort.label()),
+    ];
     if q.min_stars > 0 {
         parts.push(format!("★≥{}", q.min_stars));
     }
@@ -825,7 +910,7 @@ fn hint_is_for(key: &str, pressed: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::Event;
+    use crate::app::{Effect, Event, Press};
     use crate::installed::tests::{catalog, detected};
     use crate::installed::Installed;
     use crate::managers::by_name;
@@ -845,13 +930,59 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let (page, sidebar) = layout(Rect::new(0, 0, width, height));
         app.set_layout(page, sidebar);
-        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let mut hits = Hits::default();
+        terminal.draw(|frame| hits = draw(frame, app)).unwrap();
+        app.hits = hits;
         let buf = terminal.backend().buffer();
         (0..height).map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect()).collect()
     }
 
     fn press(app: &mut App, c: char) {
         app.update(Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+    }
+
+    fn click(app: &mut App, x: u16, y: u16) -> Vec<Effect> {
+        app.update(Event::Mouse { x, y, press: Press::Select })
+    }
+
+    #[test]
+    fn clicks_land_on_what_was_drawn() {
+        let mut app = app();
+        let areas = areas(Rect::new(0, 0, 120, 30));
+        render(&mut app, 120, 30);
+        // Border, header, then the rows; the sidebar has no header.
+        click(&mut app, areas.table.x + 5, areas.table.y + 3);
+        assert_eq!(app.selected, 1);
+        click(&mut app, areas.sidebar.x + 5, areas.sidebar.y + 2);
+        assert_eq!(app.query.category, Some(0));
+        let (push, sort) = app.hits.header[2];
+        assert_eq!((push.y, sort), (areas.table.y + 1, Sort::Updated));
+        click(&mut app, push.x + 2, push.y);
+        assert_eq!((app.query.sort, app.query.reverse), (Sort::Updated, false));
+        click(&mut app, push.x + 2, push.y);
+        assert!(app.query.reverse, "the same header again reverses the order");
+        assert!(render(&mut app, 120, 30)[areas.table.y as usize + 1].contains("PUSH ▴"));
+
+        let language = app.hits.language;
+        click(&mut app, language.x + 1, language.y);
+        assert!(matches!(&app.mode, Mode::Picker(p) if matches!(p.kind, PickerKind::Language(_))));
+        render(&mut app, 120, 30);
+        let menu = app.hits.overlay;
+        assert_eq!((menu.x, menu.y), (language.x, language.y + 1), "the menu hangs below its header");
+        let list = app.hits.list;
+        click(&mut app, list.x + 2, list.y + 1);
+        app.update(Event::Mouse { x: list.x + 2, y: list.y + 1, press: Press::Act });
+        assert_eq!((&app.mode, app.query.language.is_some()), (&Mode::Normal, true));
+
+        press(&mut app, '?');
+        render(&mut app, 120, 30);
+        let list = app.hits.list;
+        click(&mut app, list.x + 3, list.y + 2);
+        assert!(matches!(&app.mode, Mode::Help(h) if h.selected == 2));
+        click(&mut app, list.x, list.y - 1);
+        assert!(matches!(app.mode, Mode::Help(_)), "the search bar is inside the box");
+        click(&mut app, 0, 0);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     fn esc(app: &mut App) {
@@ -889,7 +1020,11 @@ mod tests {
         let mut app = app();
         app.theme = crate::theme::by_name("nord");
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, &app);
+            })
+            .unwrap();
         let buf = terminal.backend().buffer().clone();
         let row = Rect::new(0, 0, 120, 30);
         let table = areas(row).table;
@@ -902,7 +1037,11 @@ mod tests {
         assert_eq!(border.1, THEMES[app.theme].link, "and the border ends at the link colour");
 
         app.mode = Mode::Search;
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, &app);
+            })
+            .unwrap();
         let buf = terminal.backend().buffer();
         assert_eq!(buf[(table.x + 1, bar)].bg, THEMES[app.theme].dim, "grey while searching");
     }
@@ -913,10 +1052,18 @@ mod tests {
         app.theme = crate::theme::by_name("nord");
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let at = |t: &Terminal<TestBackend>, x, y| t.backend().buffer()[(x, y)].clone();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, &app);
+            })
+            .unwrap();
         let (name, border) = (at(&terminal, 5, 5), at(&terminal, 1, 1));
         press(&mut app, '?');
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, &app);
+            })
+            .unwrap();
         let (dim_name, dim_border) = (at(&terminal, 5, 5), at(&terminal, 1, 1));
         assert_eq!(dim_name.symbol(), name.symbol(), "the backdrop keeps its text");
         assert_ne!(dim_name.fg, name.fg, "but sinks towards the background");
@@ -1069,7 +1216,11 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let (page, sidebar) = layout(Rect::new(0, 0, 120, 30));
         app.set_layout(page, sidebar);
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, &app);
+            })
+            .unwrap();
         let buf = terminal.backend().buffer();
         // The second row, since the selected one is painted over by the bar.
         let row = areas(Rect::new(0, 0, 120, 30)).table.y + 3;
@@ -1107,7 +1258,11 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(screen.width, screen.height)).unwrap();
         let (page, sidebar) = layout(screen);
         app.set_layout(page, sidebar);
-        terminal.draw(|frame| draw(frame, app)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, app);
+            })
+            .unwrap();
         let buf = terminal.backend().buffer();
         (region.y..region.bottom())
             .flat_map(|y| (region.x..region.right()).map(move |x| (x, y)))
