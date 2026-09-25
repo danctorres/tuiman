@@ -83,6 +83,8 @@ pub enum Mode {
     Picker(Picker),
     Help(Help),
     Log,
+    /// `q` confirms; any other key cancels.
+    Quit,
 }
 
 /// The key list overlay.
@@ -117,7 +119,7 @@ pub const HELP: [(&str, &str); 24] = [
     ("v", "view job output"),
     ("t", "colour theme"),
     ("?", "this help"),
-    ("qq", "quit"),
+    ("q", "quit"),
     ("c", "clear all filters"),
 ];
 
@@ -188,7 +190,6 @@ pub struct App {
     pub sidebar_focused: bool,
     /// The layout has room for the sidebar; reported by the shell.
     pub sidebar_visible: bool,
-    pub quit_armed: bool,
     /// Digits typed so far, repeating the next motion as in vim's `3j`.
     pub count: usize,
     /// The count before a first `g`, waiting for the second one of `gg`.
@@ -224,7 +225,6 @@ impl App {
             theme: 0,
             sidebar_focused: false,
             sidebar_visible: true,
-            quit_armed: false,
             count: 0,
             g_pending: None,
             last_key: String::new(),
@@ -403,7 +403,6 @@ impl App {
         if ctrl && key.code == KeyCode::Char('c') {
             return vec![Effect::Quit];
         }
-        let armed = std::mem::take(&mut self.quit_armed);
         let mut count = std::mem::take(&mut self.count);
         let g_pending = self.g_pending.take();
         // A leading 0 is not a count, as in vim.
@@ -438,7 +437,7 @@ impl App {
             false => String::new(),
         };
         match self.mode {
-            Mode::Normal => self.on_normal_key(key.code, ctrl, armed, count),
+            Mode::Normal => self.on_normal_key(key.code, ctrl, count),
             Mode::Search => {
                 self.on_search_key(key.code, ctrl);
                 Vec::new()
@@ -456,6 +455,13 @@ impl App {
                 self.mode = Mode::Normal;
                 Vec::new()
             }
+            Mode::Quit => {
+                self.mode = Mode::Normal;
+                match key.code {
+                    KeyCode::Char('q') => vec![Effect::Quit],
+                    _ => Vec::new(),
+                }
+            }
         }
     }
 
@@ -470,7 +476,7 @@ impl App {
         }
     }
 
-    fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, quit_armed: bool, count: usize) -> Vec<Effect> {
+    fn on_normal_key(&mut self, code: KeyCode, ctrl: bool, count: usize) -> Vec<Effect> {
         self.status.clear();
         self.flash = FLASH_TICKS;
         let n = count.max(1) as isize;
@@ -516,17 +522,7 @@ impl App {
             }
         }
         match code {
-            KeyCode::Char('q') => {
-                if quit_armed {
-                    return vec![Effect::Quit];
-                }
-                self.quit_armed = true;
-                self.status = match self.running {
-                    Some(_) => "A job is still running · q again quits anyway",
-                    None => "q again quits",
-                }
-                .into();
-            }
+            KeyCode::Char('q') => self.mode = Mode::Quit,
             KeyCode::Char(')') => self.move_by(n * half_page),
             KeyCode::Char('(') => self.move_by(-n * half_page),
             KeyCode::Char('d') if ctrl => self.move_by(n * half_page),
@@ -1466,22 +1462,14 @@ mod tests {
     }
 
     #[test]
-    fn quitting_needs_two_presses() {
+    fn quitting_asks_first() {
         let mut app = app(&[]);
         assert!(press(&mut app, KeyCode::Char('q')).is_empty());
-        assert!(app.status.contains("q again"), "{}", app.status);
-        assert!(press(&mut app, KeyCode::Char('j')).is_empty(), "any other key disarms");
-        assert!(press(&mut app, KeyCode::Char('q')).is_empty());
-        assert_eq!(press(&mut app, KeyCode::Char('q')), [Effect::Quit]);
-    }
-
-    #[test]
-    fn quitting_with_a_running_job_says_so() {
-        let mut app = app(&["brew"]);
-        press(&mut app, KeyCode::Enter);
-        press(&mut app, KeyCode::Enter);
-        assert!(press(&mut app, KeyCode::Char('q')).is_empty());
-        assert!(app.status.contains("still running"), "{}", app.status);
+        assert_eq!(app.mode, Mode::Quit);
+        assert!(press(&mut app, KeyCode::Char('3')).is_empty(), "any other key cancels, digits too");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.selected, 0, "the cancelling key is not acted on");
+        press(&mut app, KeyCode::Char('q'));
         assert_eq!(press(&mut app, KeyCode::Char('q')), [Effect::Quit]);
     }
 

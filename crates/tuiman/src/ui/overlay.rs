@@ -180,6 +180,20 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
 }
 
 /// The tail of the job log; older lines scroll off the top.
+pub fn quit(buf: &mut Buffer, area: Rect, app: &App) {
+    let t = app.theme();
+    let lines: &[&str] = match app.running {
+        Some(_) => &["A job is still running.", "q quits anyway · any other key cancels"],
+        None => &["q confirms · any other key cancels"],
+    };
+    let widest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+    let rect = centered(area, widest + 2 * PAD + 2, lines.len() as u16 + 4);
+    let inner = frame(buf, rect, t, "Quit?", "");
+    for (line, y) in lines.iter().zip(inner.y..inner.bottom()) {
+        buf.set_stringn(inner.x, y, line, inner.width as usize, Style::new());
+    }
+}
+
 pub fn log(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
     let rect = centered(area, area.width.saturating_sub(4), area.height.saturating_sub(4));
