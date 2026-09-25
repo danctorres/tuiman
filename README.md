@@ -96,7 +96,7 @@ Run `tuiman`. Press `?` for every key; the important ones:
 | `?` | key help (`/` searches it) |
 | `r` | refresh the index |
 | `c` | clear filters |
-| mouse | click selects, double-click acts as `enter`; a header click sorts by that column and a second click reverses it, the `LANGUAGE` header drops down a language menu; right-click opens the project page; the wheel moves through any list |
+| mouse | click selects, double-click acts as `enter`; a header click sorts by that column and a second click reverses it, the `LANGUAGE` header drops down a language menu; a key hint in the status bar presses that key; right-click opens the project page; the wheel moves through any list |
 
 In the list, `✓` means a package manager installed it, `•` means its binary is
 on your `PATH` but came from somewhere else (a downloaded release, a script, a
