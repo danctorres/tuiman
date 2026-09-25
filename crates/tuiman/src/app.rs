@@ -968,15 +968,15 @@ impl App {
 
     fn on_picker_key(&mut self, code: KeyCode, ctrl: bool, count: usize) -> Vec<Effect> {
         let Mode::Picker(picker) = &mut self.mode else { return Vec::new() };
-        // `/` starts a theme search; while it is open, typing edits it, and esc
-        // or enter close it on the theme being previewed.
+        // `/` starts a theme search; while it is open, typing edits it, esc
+        // closes it on the theme being previewed, and enter picks that theme.
         if let PickerKind::Theme { original, filter, .. } = &mut picker.kind {
             let edited = match (code, &mut *filter) {
                 (KeyCode::Char('/'), None) => {
                     *filter = Some(String::new());
                     true
                 }
-                (KeyCode::Esc | KeyCode::Enter, Some(_)) => {
+                (KeyCode::Esc, Some(_)) => {
                     *filter = None;
                     true
                 }
@@ -1407,10 +1407,14 @@ mod tests {
         let Mode::Picker(picker) = &app.mode else { panic!("no picker") };
         assert_eq!(picker.items, ["nord"]);
         assert_eq!(THEMES[app.theme].name, "nord", "the match previews");
-        type_text(&mut app, "x");
-        assert_eq!(press(&mut app, KeyCode::Enter), [], "enter closes the search");
-        assert_eq!(app.theme, 0, "no match keeps the original");
-        press(&mut app, KeyCode::Esc);
+        assert_eq!(press(&mut app, KeyCode::Enter), [Effect::SaveTheme("nord")], "enter picks the match");
+        assert!(matches!(app.mode, Mode::Normal));
+        let nord = app.theme;
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "zzz");
+        assert_eq!(press(&mut app, KeyCode::Enter), [], "enter on no match picks nothing");
+        assert_eq!(app.theme, nord, "no match keeps the original");
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "q");
