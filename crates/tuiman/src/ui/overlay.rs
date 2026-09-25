@@ -6,6 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Widget};
 
+use super::Hits;
 use crate::app::{App, Help, Picker, PickerKind, HELP};
 use crate::theme::{Theme, THEMES};
 
@@ -15,6 +16,13 @@ const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let (w, h) = (width.min(area.width), height.min(area.height));
     Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
+}
+
+/// A `width` x `height` box hanging below `anchor`, as a menu from a header,
+/// moved up or left as far as it takes to stay on screen.
+fn dropped(area: Rect, anchor: Rect, width: u16, height: u16) -> Rect {
+    let (w, h) = (width.min(area.width), height.min(area.height));
+    Rect::new(anchor.x.min(area.right() - w), anchor.bottom().min(area.bottom() - h), w, h)
 }
 
 /// A modal box holds its contents `PAD` columns and a line clear of the
@@ -43,8 +51,16 @@ fn frame(buf: &mut Buffer, rect: Rect, t: &Theme, title: &str, footer: &'static 
     inner
 }
 
-/// Returns where the cursor goes while typing a theme search.
-pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Option<(u16, u16)> {
+/// Returns where the cursor goes while typing a theme search. With an
+/// `anchor` the box drops down from it instead of floating in the middle.
+pub fn picker(
+    buf: &mut Buffer,
+    area: Rect,
+    picker: &Picker,
+    t: &Theme,
+    hits: &mut Hits,
+    anchor: Option<Rect>,
+) -> Option<(u16, u16)> {
     let search = match &picker.kind {
         PickerKind::Theme { filter, .. } => Some(filter.as_deref()),
         _ => None,
@@ -62,7 +78,12 @@ pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Optio
     let widest = picker.items.iter().map(|i| i.chars().count()).max().unwrap_or(0);
     let widest = widest.max(picker.title.chars().count() + 2).max(footer.chars().count());
     // Roomy even for one short command, and a sensible minimum width.
-    let rect = centered(area, (widest as u16 + 2 * PAD + 4).max(54), rows as u16 + bar + 4);
+    let (width, height) = ((widest as u16 + 2 * PAD + 4).max(54), rows as u16 + bar + 4);
+    let rect = match anchor {
+        Some(anchor) => dropped(area, anchor, width, height),
+        None => centered(area, width, height),
+    };
+    hits.overlay = rect;
     let inner = frame(buf, rect, t, &picker.title, footer);
     let mut cursor = None;
     let inner = match search {
@@ -85,6 +106,7 @@ pub fn picker(buf: &mut Buffer, area: Rect, picker: &Picker, t: &Theme) -> Optio
     let indent = if search.is_some() { 2 } else { 0 };
     // Keep the selection visible when the list is taller than the screen.
     let first = picker.selected.saturating_sub(inner.height.saturating_sub(1) as usize);
+    (hits.list, hits.first) = (inner, first);
     let stripe = t.stripe();
     for ((i, item), y) in picker.items.iter().enumerate().skip(first).zip(inner.y..inner.bottom()) {
         let style = match (i == picker.selected, search) {
@@ -141,11 +163,13 @@ fn search_bar(
 }
 
 /// A search bar over the narrowed key list. Returns where the cursor goes while typing.
-pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16, u16)> {
+pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help, hits: &mut Hits) -> Option<(u16, u16)> {
     let filter = help.filter.as_deref();
     let rows: Vec<_> = help.rows().collect();
     let footer = if filter.is_some() { " ↑↓ move · esc clears " } else { " ↑↓ move · esc closes " };
-    let inner = frame(buf, centered(area, 62 + 2 * PAD, HELP.len() as u16 + 6), t, "Keys", footer);
+    let rect = centered(area, 62 + 2 * PAD, HELP.len() as u16 + 6);
+    hits.overlay = rect;
+    let inner = frame(buf, rect, t, "Keys", footer);
     if inner.height == 0 || inner.width < 4 {
         return None;
     }
@@ -155,10 +179,11 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
         buf.set_stringn(inner.x, inner.y + 2, "No matching keys", width, t.dim());
     }
     // Keep the selection visible when the list is taller than the box.
-    let list_height = inner.height.saturating_sub(2) as usize;
-    let first = help.selected.saturating_sub(list_height.saturating_sub(1));
+    let list = Rect { y: inner.y + 2, height: inner.height.saturating_sub(2), ..inner };
+    let first = help.selected.saturating_sub((list.height as usize).saturating_sub(1));
+    (hits.list, hits.first) = (list, first);
     let stripe = t.stripe();
-    for ((i, (keys, what)), y) in rows.into_iter().enumerate().skip(first).zip(inner.y + 2..inner.bottom()) {
+    for ((i, (keys, what)), y) in rows.into_iter().enumerate().skip(first).zip(list.y..list.bottom()) {
         let selected = i == help.selected;
         let bar = if filter.is_some() { t.searching() } else { t.selected() };
         if selected {
@@ -179,7 +204,6 @@ pub fn help(buf: &mut Buffer, area: Rect, t: &Theme, help: &Help) -> Option<(u16
     cursor
 }
 
-/// The tail of the job log; older lines scroll off the top.
 pub fn quit(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
     let lines: &[&str] = match app.running {
@@ -194,10 +218,11 @@ pub fn quit(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
+/// The tail of the job log, or `log_back` lines before it; older lines scroll off the top.
 pub fn log(buf: &mut Buffer, area: Rect, app: &App) {
     let t = app.theme();
     let rect = centered(area, area.width.saturating_sub(4), area.height.saturating_sub(4));
-    let inner = frame(buf, rect, t, "Job output", " any key closes ");
+    let inner = frame(buf, rect, t, "Job output", " wheel scrolls · any key closes ");
     // Too short for the padding, which leaves the inner area below the screen.
     if inner.is_empty() {
         return;
@@ -206,7 +231,7 @@ pub fn log(buf: &mut Buffer, area: Rect, app: &App) {
         buf.set_stringn(inner.x, inner.y, "No jobs have run yet.", inner.width as usize, t.dim());
         return;
     }
-    let skip = app.log.len().saturating_sub(inner.height as usize);
+    let skip = app.log.len().saturating_sub(inner.height as usize + app.log_back);
     for (line, y) in app.log.iter().skip(skip).zip(inner.y..inner.bottom()) {
         let style = if line.starts_with("$ ") { t.accent() } else { Style::new() };
         buf.set_stringn(inner.x, y, line, inner.width as usize, style);
