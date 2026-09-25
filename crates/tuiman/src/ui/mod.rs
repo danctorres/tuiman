@@ -136,6 +136,8 @@ pub struct Hits {
     pub overlay: Rect,
     pub list: Rect,
     pub first: usize,
+    /// The status bar's key hints, each with the key it stands for.
+    pub hints: [(Rect, &'static str); 14],
 }
 
 /// What is under the mouse. An index may run past the end of its list: the
@@ -150,6 +152,8 @@ pub enum Target {
     Language,
     /// Inside the overlay; on its list at this index, or beside it.
     Overlay(Option<usize>),
+    /// A status bar hint, which presses its key.
+    Hint(&'static str),
     None,
 }
 
@@ -172,6 +176,8 @@ impl Hits {
             Target::Header(sort)
         } else if self.language.contains(pos) {
             Target::Language
+        } else if let Some(&(_, key)) = self.hints.iter().find(|(rect, _)| rect.contains(pos)) {
+            Target::Hint(key)
         } else {
             Target::None
         }
@@ -194,7 +200,7 @@ pub fn draw(frame: &mut Frame, app: &App) -> Hits {
     if !areas.details.is_empty() {
         details(buf, areas.details, app);
     }
-    status(buf, areas.status, app);
+    status(buf, areas.status, app, &mut hits);
 
     // A modal floats over a darkened screen, the way a compositor dims what is
     // behind a dialog. The overlay clears its own box back to full strength.
@@ -750,7 +756,8 @@ fn detail_lines(app: &App, row: Row) -> Vec<Line<'_>> {
     ]
 }
 
-fn status(buf: &mut Buffer, area: Rect, app: &App) {
+/// Records where it drew each key hint in `hits`.
+fn status(buf: &mut Buffer, area: Rect, app: &App, hits: &mut Hits) {
     let t = app.theme();
     if area.is_empty() {
         return;
@@ -846,15 +853,24 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
     let divider: &str = if nerd() { POWER_SEP } else { " │ " };
     const GAP: &str = "  ";
     let end = right.saturating_sub(1);
-    let draw = |buf: &mut Buffer, x: u16, sep: &str, (key, label): (&str, &str)| {
+    let mut n = 0;
+    let mut draw = |buf: &mut Buffer, x: u16, sep: &str, (key, label): (&'static str, &str)| {
         let lit = app.flash > 0 && hint_is_for(key, &app.last_key);
         let (key_style, label_style) = match lit {
             true => (t.flash(flash_level(app.flash)), t.flash(flash_level(app.flash))),
             false => (t.accent().patch(BOLD), t.dim()),
         };
         let x = buf.set_stringn(x, area.y, sep, end.saturating_sub(x) as usize, t.dim()).0;
+        let start = x;
         let x = buf.set_stringn(x, area.y, key, end.saturating_sub(x) as usize, key_style).0;
-        buf.set_stringn(x, area.y, format!(" {label}"), end.saturating_sub(x) as usize, label_style).0
+        let x =
+            buf.set_stringn(x, area.y, format!(" {label}"), end.saturating_sub(x) as usize, label_style).0;
+        // A hint past the array is drawn but not clickable.
+        if let Some(hint) = hits.hints.get_mut(n) {
+            *hint = (Rect::new(start, area.y, x - start, 1), key);
+        }
+        n += 1;
+        x
     };
     let width = |sep: &str, (key, label): (&str, &str)| {
         (sep.chars().count() + key.chars().count() + 1 + label.len()) as u16
@@ -1175,6 +1191,21 @@ mod tests {
         let wide = render(&mut app, 200, 20).pop().unwrap();
         let divider: &str = if nerd() { POWER_SEP } else { " │ " };
         assert!(wide.contains(&format!("q quit{divider}? help")), "{wide}");
+    }
+
+    #[test]
+    fn a_hint_click_presses_its_key() {
+        let mut app = app();
+        render(&mut app, 200, 20);
+        let at = |app: &App, key| app.hits.hints.iter().find(|(_, k)| *k == key).unwrap().0;
+        let quit = at(&app, "q");
+        click(&mut app, quit.x + 3, quit.y);
+        assert_eq!(app.mode, Mode::Quit);
+        click(&mut app, 0, 0);
+        render(&mut app, 200, 20);
+        let help = at(&app, "?");
+        click(&mut app, help.x, help.y);
+        assert!(matches!(app.mode, Mode::Help(_)));
     }
 
     #[test]

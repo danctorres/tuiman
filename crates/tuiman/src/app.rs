@@ -568,6 +568,21 @@ impl App {
                 let current = self.query.category.map_or(0, |c| c as isize + 1);
                 self.step_category(i as isize - current, false);
             }
+            // A hint presses its key, lighting up as if typed.
+            (Target::Hint(key), Press::Select | Press::Act) => {
+                let code = match key {
+                    "enter" => KeyCode::Enter,
+                    "esc" => KeyCode::Esc,
+                    _ => {
+                        let mut chars = key.chars();
+                        match (chars.next(), chars.next()) {
+                            (Some(c), None) => KeyCode::Char(c),
+                            _ => return effects,
+                        }
+                    }
+                };
+                return self.update(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+            }
             (Target::Language, Press::Select | Press::Act) => {
                 self.status.clear();
                 self.mode = Mode::Normal;
