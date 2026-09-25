@@ -117,7 +117,7 @@ pub const HELP: [(&str, &str); 24] = [
     ("v", "view job output"),
     ("t", "colour theme"),
     ("?", "this help"),
-    ("q", "quit"),
+    ("qq", "quit"),
     ("c", "clear all filters"),
 ];
 
@@ -188,7 +188,7 @@ pub struct App {
     pub sidebar_focused: bool,
     /// The layout has room for the sidebar; reported by the shell.
     pub sidebar_visible: bool,
-    quit_armed: bool,
+    pub quit_armed: bool,
     /// Digits typed so far, repeating the next motion as in vim's `3j`.
     pub count: usize,
     /// The count before a first `g`, waiting for the second one of `gg`.
@@ -517,11 +517,15 @@ impl App {
         }
         match code {
             KeyCode::Char('q') => {
-                if self.running.is_none() || quit_armed {
+                if quit_armed {
                     return vec![Effect::Quit];
                 }
                 self.quit_armed = true;
-                self.status = "A job is still running (press q again to quit anyway)".into();
+                self.status = match self.running {
+                    Some(_) => "A job is still running · q again quits anyway",
+                    None => "q again quits",
+                }
+                .into();
             }
             KeyCode::Char(')') => self.move_by(n * half_page),
             KeyCode::Char('(') => self.move_by(-n * half_page),
@@ -1462,11 +1466,22 @@ mod tests {
     }
 
     #[test]
-    fn quitting_with_a_running_job_needs_two_presses() {
+    fn quitting_needs_two_presses() {
+        let mut app = app(&[]);
+        assert!(press(&mut app, KeyCode::Char('q')).is_empty());
+        assert!(app.status.contains("q again"), "{}", app.status);
+        assert!(press(&mut app, KeyCode::Char('j')).is_empty(), "any other key disarms");
+        assert!(press(&mut app, KeyCode::Char('q')).is_empty());
+        assert_eq!(press(&mut app, KeyCode::Char('q')), [Effect::Quit]);
+    }
+
+    #[test]
+    fn quitting_with_a_running_job_says_so() {
         let mut app = app(&["brew"]);
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Enter);
         assert!(press(&mut app, KeyCode::Char('q')).is_empty());
+        assert!(app.status.contains("still running"), "{}", app.status);
         assert_eq!(press(&mut app, KeyCode::Char('q')), [Effect::Quit]);
     }
 

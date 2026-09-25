@@ -725,6 +725,8 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
             match app.status.chars().next() {
                 Some('✓') => Style::new().fg(t.installed).patch(BOLD),
                 Some('✗') => Style::new().fg(t.archived).patch(BOLD),
+                // The quit prompt is mid-command, so it gets the pending count's look.
+                _ if app.quit_armed => t.accent().patch(BOLD),
                 _ => Style::new(),
             },
         );
@@ -744,7 +746,7 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
             ("a", "installable"),
             ("c", "clear"),
         ],
-        &[("r", "refresh"), ("t", "theme"), ("q", "quit")],
+        &[("r", "refresh"), ("t", "theme"), ("qq", "quit")],
     ];
     // While a search is open, letters type, so only the keys that end it matter.
     let groups: &[&[(&str, &str)]] = match app.mode {
@@ -1020,10 +1022,10 @@ mod tests {
         let status = render(&mut app, 60, 20).pop().unwrap();
         assert!(status.contains("? help"), "{status}");
         assert!(status.contains("enter install/uninstall"), "{status}");
-        assert!(!status.contains("q quit"), "{status}");
+        assert!(!status.contains("qq quit"), "{status}");
         let wide = render(&mut app, 200, 20).pop().unwrap();
         let divider: &str = if nerd() { POWER_SEP } else { " │ " };
-        assert!(wide.contains(&format!("q quit{divider}? help")), "{wide}");
+        assert!(wide.contains(&format!("qq quit{divider}? help")), "{wide}");
     }
 
     #[test]
